@@ -32,6 +32,7 @@ This installs `cocotb` and `pyserial` into `.venv`.
 Run the software-only protocol smoke test:
 
 ```sh
+scripts/run_emulator_smoke.sh
 make emu-smoke TARGET=tangnano9k
 ```
 
@@ -44,6 +45,7 @@ scripts/launch_ubuntu_24_04.sh emu-smoke
 Run a pseudo-terminal that behaves like a TangMiner UART device:
 
 ```sh
+scripts/run_emulator.sh
 make emu-pty TARGET=tangnano9k
 ```
 
@@ -68,6 +70,7 @@ source "$HOME/oss-cad-suite/environment"
 Run the top-level UART tests against the hand-written Verilog:
 
 ```sh
+scripts/run_rtl_sim.sh
 make sim-cocotb TARGET=tangnano9k SIM=verilator
 ```
 

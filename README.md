@@ -133,14 +133,22 @@ scripts/install_ubuntu_24_04.sh
 Run the lightweight protocol emulator smoke test:
 
 ```sh
+scripts/run_emulator_smoke.sh
 make emu-smoke TARGET=tangnano9k
 scripts/launch_ubuntu_24_04.sh emu-smoke
+```
+
+Run the software UART emulator as a pseudo-terminal:
+
+```sh
+scripts/run_emulator.sh
 ```
 
 Run top-level UART RTL simulation with cocotb and Verilator:
 
 ```sh
 source "$HOME/oss-cad-suite/environment"
+scripts/run_rtl_sim.sh
 make sim-cocotb TARGET=tangnano9k SIM=verilator
 scripts/launch_ubuntu_24_04.sh sim-cocotb
 ```
