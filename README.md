@@ -44,10 +44,22 @@ stratum/build/stratum-client \
   --fpga-target quick21
 ```
 
-Run the software FPGA emulator against the same pool at about `5 kH/s`:
+Run the software FPGA emulator against the same pool at about `5 kH/s`.
+Start the emulator in one terminal and leave it running:
 
 ```sh
 python3 stratum/tools/fake_fpga.py --mode hash --max-nonces 100000
+```
+
+It prints a pseudo-terminal path such as:
+
+```text
+fake_fpga_pty=/dev/pts/7
+```
+
+In another terminal, replace `/dev/pts/N` with that printed path:
+
+```sh
 stratum/build/stratum-client \
   --host tinyminer.m45core.com \
   --port 3333 \
