@@ -19,8 +19,8 @@ Keep the FPGA simple:
 
 - FPGA consumes SHA-256 big-endian words.
 - FPGA returns only the four nonce bytes inserted into the hashed header.
-- FPGA uses a cheap `reverse_bytes(hash)` prefix filter to report candidates,
-  not a full target comparator.
+- FPGA uses a cheap Bitcoin-order hash prefix filter to report candidates, not
+  a full target comparator.
 - Mujina owns Bitcoin wire-format conversion, compact target expansion,
   host-side double hashing, exact target comparison, and pool share formatting.
 

@@ -3,13 +3,13 @@ package tangminer
 import spinal.core._
 import spinal.lib._
 
-class GowinRpll81MhzFrom27Mhz extends BlackBox {
+class GowinRpll100MhzFrom27Mhz extends BlackBox {
   setDefinitionName("rPLL")
   noIoPrefix()
 
   addGeneric("FCLKIN", "27.0")
-  addGeneric("IDIV_SEL", 0)
-  addGeneric("FBDIV_SEL", 2)
+  addGeneric("IDIV_SEL", 6)
+  addGeneric("FBDIV_SEL", 25)
   addGeneric("ODIV_SEL", 8)
 
   val io = new Bundle {
@@ -245,24 +245,25 @@ class UartTx(clksPerBit: Int) extends Component {
   }
 }
 
-class Sha256Compress extends Component {
+class Sha256CompressWords extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
     val stateIn = in Bits(256 bits)
-    val block = in Bits(512 bits)
+    val words = in Vec(UInt(32 bits), 16)
     val done = out Bool()
     val workOut = out Bits(256 bits)
   }
 
   val a, b, c, d, e, f, g, h = Reg(UInt(32 bits)) init 0
   val w = Vec(Reg(UInt(32 bits)) init 0, 16)
+  val wRound = Reg(UInt(32 bits)) init 0
   val round = Reg(UInt(6 bits)) init 0
   val busyReg = Reg(Bool()) init False
 
   val kVec = Vec(Sha256.K.map(Sha256.word))
   val wNext = (Sha256.smallSigma1(w(14)) + w(9) + Sha256.smallSigma0(w(1)) + w(0)).resize(32)
-  val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + kVec(round) + w(0)).resize(32)
+  val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + kVec(round) + wRound).resize(32)
   val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
   val aNext = (t1 + t2).resize(32)
   val eNext = (d + t1).resize(32)
@@ -284,6 +285,7 @@ class Sha256Compress extends Component {
   when(io.reset) {
     a := 0; b := 0; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0
     for (i <- 0 until 16) w(i) := 0
+    wRound := 0
     round := 0
     busyReg := False
   } otherwise {
@@ -298,8 +300,9 @@ class Sha256Compress extends Component {
       h := io.stateIn(31 downto 0).asUInt
 
       for (i <- 0 until 16) {
-        w(i) := Sha256.wordFromBits(io.block, i)
+        w(i) := io.words(i)
       }
+      wRound := io.words(0)
 
       round := 0
       busyReg := True
@@ -308,6 +311,7 @@ class Sha256Compress extends Component {
         w(i) := w(i + 1)
       }
       w(15) := wNext
+      wRound := w(1)
 
       h := g
       g := f
@@ -325,6 +329,94 @@ class Sha256Compress extends Component {
       }
     }
   }
+}
+
+object Sha256Pass {
+  def addFeedForward(base: Bits, work: Bits): Bits =
+    Sha256.concatWords((0 until 8).map(i =>
+      (Sha256.wordFromDigest(base, i) + Sha256.wordFromDigest(work, i)).resize(32)
+    ))
+
+  def ivBits: Bits = B(Sha256.Iv.map(v => B(v, 32 bits)).reduce(_ ## _))
+}
+
+class Sha256BitcoinFirstPass extends Component {
+  val io = new Bundle {
+    val reset = in Bool()
+    val start = in Bool()
+    val midstate = in Bits(256 bits)
+    val tail = in Bits(96 bits)
+    val nonce = in UInt(32 bits)
+    val done = out Bool()
+    val digest = out Bits(256 bits)
+  }
+
+  val core = new Sha256CompressWords
+  val words = Vec(Seq(
+    io.tail(95 downto 64).asUInt,
+    io.tail(63 downto 32).asUInt,
+    io.tail(31 downto 0).asUInt,
+    io.nonce,
+    U(BigInt("80000000", 16), 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(BigInt("00000280", 16), 32 bits)
+  ))
+
+  core.io.reset := io.reset
+  core.io.start := io.start
+  core.io.stateIn := io.midstate
+  core.io.words := words
+
+  io.done := core.io.done
+  io.digest := Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
+}
+
+class Sha256BitcoinSecondPass extends Component {
+  val io = new Bundle {
+    val reset = in Bool()
+    val start = in Bool()
+    val firstDigest = in Bits(256 bits)
+    val done = out Bool()
+    val digest = out Bits(256 bits)
+  }
+
+  val core = new Sha256CompressWords
+  val shaIv = Sha256Pass.ivBits
+  val words = Vec(Seq(
+    Sha256.wordFromDigest(io.firstDigest, 0),
+    Sha256.wordFromDigest(io.firstDigest, 1),
+    Sha256.wordFromDigest(io.firstDigest, 2),
+    Sha256.wordFromDigest(io.firstDigest, 3),
+    Sha256.wordFromDigest(io.firstDigest, 4),
+    Sha256.wordFromDigest(io.firstDigest, 5),
+    Sha256.wordFromDigest(io.firstDigest, 6),
+    Sha256.wordFromDigest(io.firstDigest, 7),
+    U(BigInt("80000000", 16), 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(0, 32 bits),
+    U(BigInt("00000100", 16), 32 bits)
+  ))
+
+  core.io.reset := io.reset
+  core.io.start := io.start
+  core.io.stateIn := shaIv
+  core.io.words := words
+
+  io.done := core.io.done
+  io.digest := Sha256Pass.addFeedForward(shaIv, core.io.workOut)
 }
 
 class BitcoinHashCore extends Component {
@@ -349,75 +441,61 @@ class BitcoinHashCore extends Component {
 
   val state = Reg(State()) init State.idle
   val shaFirstStart = Bool()
-  val shaFirstStateIn = Bits(256 bits)
-  val shaFirstBlock = Bits(512 bits)
   val shaSecondStart = Bool()
-  val shaSecondStateIn = Bits(256 bits)
-  val shaSecondBlock = Bits(512 bits)
   val jobMidstateReg = Reg(Bits(256 bits)) init 0
   val jobTailReg = Reg(Bits(96 bits)) init 0
   val jobCandidateModeReg = Reg(UInt(3 bits)) init 3
   val firstNonceReg = Reg(UInt(32 bits)) init 0
   val secondNonceReg = Reg(UInt(32 bits)) init 0
+  val checkValidReg = Reg(Bool()) init False
+  val checkDigestReg = Reg(Bits(256 bits)) init 0
+  val checkNonceReg = Reg(UInt(32 bits)) init 0
+  val checkCandidateModeReg = Reg(UInt(3 bits)) init 3
   val foundNonceReg = Reg(UInt(32 bits)) init 0
   val currentNonceReg = Reg(UInt(32 bits)) init 0
 
   shaFirstStart := False
-  shaFirstStateIn := 0
-  shaFirstBlock := 0
   shaSecondStart := False
-  shaSecondStateIn := 0
-  shaSecondBlock := 0
 
   val flushPipeline = io.stop || (io.start && state =/= State.idle)
 
-  val shaFirst = new Sha256Compress
+  val shaFirst = new Sha256BitcoinFirstPass
   shaFirst.io.reset := io.reset || flushPipeline
   shaFirst.io.start := shaFirstStart
-  shaFirst.io.stateIn := shaFirstStateIn
-  shaFirst.io.block := shaFirstBlock
+  shaFirst.io.midstate := jobMidstateReg
+  shaFirst.io.tail := jobTailReg
+  shaFirst.io.nonce := currentNonceReg
 
-  val shaSecond = new Sha256Compress
+  val shaSecond = new Sha256BitcoinSecondPass
   shaSecond.io.reset := io.reset || flushPipeline
   shaSecond.io.start := shaSecondStart
-  shaSecond.io.stateIn := shaSecondStateIn
-  shaSecond.io.block := shaSecondBlock
+  shaSecond.io.firstDigest := shaFirst.io.digest
 
-  val shaIv = B(Sha256.Iv.map(v => B(v, 32 bits)).reduce(_ ## _))
-  def addFeedForward(base: Bits, work: Bits): Bits =
-    Sha256.concatWords((0 until 8).map(i =>
-      (Sha256.wordFromDigest(base, i) + Sha256.wordFromDigest(work, i)).resize(32)
-    ))
-
-  val firstDigest = addFeedForward(jobMidstateReg, shaFirst.io.workOut)
-  val finalDigest = addFeedForward(shaIv, shaSecond.io.workOut)
-  val reversedDigest = Sha256.reverseBytes256(finalDigest)
-  val candidateAlwaysSelected = jobCandidateModeReg === U(0, 3 bits)
-  val quick3TargetSelected = jobCandidateModeReg === U(1, 3 bits)
-  val quick21TargetSelected = jobCandidateModeReg === U(2, 3 bits)
-  val quick23TargetSelected = jobCandidateModeReg === U(3, 3 bits)
-  val quick26TargetSelected = jobCandidateModeReg === U(4, 3 bits)
-  val quick3MeetsTarget = reversedDigest(255 downto 253) === B(0, 3 bits)
-  val quick21MeetsTarget = reversedDigest(255 downto 235) === B(0, 21 bits)
-  val quick23MeetsTarget = reversedDigest(255 downto 233) === B(0, 23 bits)
-  val quick26MeetsTarget = reversedDigest(255 downto 230) === B(0, 26 bits)
-  val digestMeetsTarget =
+  val candidateAlwaysSelected = checkCandidateModeReg === U(0, 3 bits)
+  val quick3TargetSelected = checkCandidateModeReg === U(1, 3 bits)
+  val quick21TargetSelected = checkCandidateModeReg === U(2, 3 bits)
+  val quick23TargetSelected = checkCandidateModeReg === U(3, 3 bits)
+  val quick26TargetSelected = checkCandidateModeReg === U(4, 3 bits)
+  val quick3MeetsTarget = checkDigestReg(7 downto 5) === B(0, 3 bits)
+  val quick21MeetsTarget =
+    checkDigestReg(7 downto 0) === B(0, 8 bits) &&
+      checkDigestReg(15 downto 8) === B(0, 8 bits) &&
+      checkDigestReg(23 downto 19) === B(0, 5 bits)
+  val quick23MeetsTarget =
+    checkDigestReg(7 downto 0) === B(0, 8 bits) &&
+      checkDigestReg(15 downto 8) === B(0, 8 bits) &&
+      checkDigestReg(23 downto 17) === B(0, 7 bits)
+  val quick26MeetsTarget =
+    checkDigestReg(7 downto 0) === B(0, 8 bits) &&
+      checkDigestReg(15 downto 8) === B(0, 8 bits) &&
+      checkDigestReg(23 downto 16) === B(0, 8 bits) &&
+      checkDigestReg(31 downto 30) === B(0, 2 bits)
+  val checkDigestMeetsTarget =
     candidateAlwaysSelected ||
       (quick3TargetSelected && quick3MeetsTarget) ||
       (quick21TargetSelected && quick21MeetsTarget) ||
       (quick23TargetSelected && quick23MeetsTarget) ||
       (quick26TargetSelected && quick26MeetsTarget)
-
-  def firstBlockForNonce(nonce: UInt): Bits =
-    jobTailReg(95 downto 64) ## jobTailReg(63 downto 32) ## jobTailReg(31 downto 0) ## nonce.asBits ##
-      B"32'h80000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
-      B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
-      B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000280"
-  val firstBlock = firstBlockForNonce(currentNonceReg)
-  def secondBlockForDigest(digest: Bits): Bits =
-    digest ##
-      B"32'h80000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
-      B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000100"
 
   io.running := state =/= State.idle && state =/= State.report
   io.found := state === State.report
@@ -431,11 +509,16 @@ class BitcoinHashCore extends Component {
     jobCandidateModeReg := 3
     firstNonceReg := 0
     secondNonceReg := 0
+    checkValidReg := False
+    checkDigestReg := 0
+    checkNonceReg := 0
+    checkCandidateModeReg := 3
     foundNonceReg := 0
     currentNonceReg := 0
   } otherwise {
     when(io.stop) {
       state := State.idle
+      checkValidReg := False
     } elsewhen(io.start) {
       state := State.firstStart
       jobMidstateReg := io.midstate
@@ -444,37 +527,37 @@ class BitcoinHashCore extends Component {
       currentNonceReg := io.startNonce
       firstNonceReg := io.startNonce
       secondNonceReg := io.startNonce
+      checkValidReg := False
     } otherwise {
-      val hitThisCycle = shaSecond.io.done && digestMeetsTarget
+      checkValidReg := False
       switch(state) {
         is(State.idle) {
         }
         is(State.firstStart) {
-          shaFirstStateIn := jobMidstateReg
-          shaFirstBlock := firstBlock
           shaFirstStart := True
           firstNonceReg := currentNonceReg
           currentNonceReg := currentNonceReg + io.nonceStride
           state := State.run
         }
         is(State.run) {
-          when(shaFirst.io.done && !hitThisCycle) {
-            shaSecondStateIn := shaIv
-            shaSecondBlock := secondBlockForDigest(firstDigest)
-            shaSecondStart := True
-            secondNonceReg := firstNonceReg
+          when(checkValidReg && checkDigestMeetsTarget) {
+            foundNonceReg := checkNonceReg
+            state := State.report
+          } otherwise {
+            when(shaFirst.io.done) {
+              shaSecondStart := True
+              secondNonceReg := firstNonceReg
 
-            shaFirstStateIn := jobMidstateReg
-            shaFirstBlock := firstBlock
-            shaFirstStart := True
-            firstNonceReg := currentNonceReg
-            currentNonceReg := currentNonceReg + io.nonceStride
-          }
+              shaFirstStart := True
+              firstNonceReg := currentNonceReg
+              currentNonceReg := currentNonceReg + io.nonceStride
+            }
 
-          when(shaSecond.io.done) {
-            when(digestMeetsTarget) {
-              foundNonceReg := secondNonceReg
-              state := State.report
+            when(shaSecond.io.done) {
+              checkValidReg := True
+              checkDigestReg := shaSecond.io.digest
+              checkNonceReg := secondNonceReg
+              checkCandidateModeReg := jobCandidateModeReg
             }
           }
         }
@@ -503,7 +586,7 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24, usePll: Boolean = f
   val systemClockLocked = Bool()
 
   if (usePll) {
-    val pll = new GowinRpll81MhzFrom27Mhz
+    val pll = new GowinRpll100MhzFrom27Mhz
     pll.io.CLKIN := io.clk
     pll.io.CLKFB := False
     pll.io.FBDSEL := 0

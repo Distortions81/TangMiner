@@ -20,7 +20,7 @@ from tangminer_emulator import (
 
 
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
-HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "81000000"))
+HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "100285714"))
 LANE_COUNT = 4
 
 

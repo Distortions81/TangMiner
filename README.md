@@ -13,6 +13,7 @@ This is a learning and integration project, not an economically useful miner. Th
 Current working state:
 
 - Tang Nano 20K is the default target. The active SpinalHDL design uses four compact SHA-256 lanes and is focused on the 20K area/timing budget.
+- The default 20K build uses the onboard `27 MHz` clock through an internal Gowin `rPLL` at `100.286 MHz`, giving an RTL model rate of `6.27 MH/s`.
 - Tang Nano 9K board files remain in the tree for comparison and simulation, but the four-lane bitstream is not aimed at fitting the 9K.
 - The host protocol is documented below and implemented directly in the FPGA UART parser.
 - Mujina integration work lives in its experimental Tang Nano FPGA backend [mujina-tangminer](https://github.com/skot/mujina/tree/tangminer). The current hardware contract reports nonce-only candidates and leaves full share validation on the host.
@@ -116,6 +117,86 @@ Build the legacy hand-written Verilog bitstream for comparison:
 make build-verilog
 ```
 
+## Performance Model
+
+The production 20K SpinalHDL bitstream is a four-lane pass-pipelined SHA-256
+design. Each lane has a first-pass compressor and a second-pass compressor, so a
+lane can launch a new nonce every `64` fabric clocks after filling the pipeline.
+With four lanes, the aggregate cadence is one tested nonce every `16` clocks.
+
+Current default 20K numbers:
+
+```text
+PLL clock:        100.286 MHz from the 27 MHz board clock
+Cycles per nonce: 16 aggregate clocks
+Hashrate model:   100,285,714 / 16 = 6,267,857 H/s = 6.27 MH/s
+Routed timing:    116.90 MHz Fmax, PASS at 100.29 MHz
+```
+
+Expected FPGA-side candidate cadence for the built-in quick filters:
+
+```text
+quick21: about 0.33 seconds per candidate
+quick23: about 1.3 seconds per candidate
+quick26: about 10.7 seconds per candidate
+```
+
+These are RTL/hardware-rate estimates from the nonce cadence, not Python
+runtime. The FPGA only reports candidate nonces for the selected cheap prefix
+filter; host software must rebuild the header, double-hash it, and perform the
+authoritative share target check.
+
+## Mining And Benchmarking Quickstart
+
+Set up the Python tools once:
+
+```sh
+make setup-emulation
+```
+
+Run a software-only miner-style share log. This uses the Python hash model and
+defaults to a `quick14` target with a `6 kH/s` software estimate, producing a
+share every few seconds:
+
+```sh
+make software-mine
+make software-mine MINE_ARGS='--count 5 --verbose'
+```
+
+Run the Python UART protocol emulator smoke test:
+
+```sh
+make emu-smoke TARGET=tangnano9k
+```
+
+Run simulated hardware mining without a board by starting the PTY emulator in
+one terminal and pointing the hardware miner script at the printed PTY path in
+another:
+
+```sh
+scripts/run_emulator.sh --no-auto-benchmark --max-nonces 1000 --stats-interval 0
+make hardware-mine MINE_ARGS='--target quick3 --count 3 /dev/pts/N'
+```
+
+Run against real hardware after loading or flashing the bitstream and putting
+the board bridge in UART mode:
+
+```sh
+make hardware-mine MINE_ARGS='--target quick23 --count 10 /dev/cu.usbserial-*'
+```
+
+Run RTL simulation and get the cycle-count hashrate line:
+
+```sh
+make sim-cocotb-spinal TARGET=tangnano9k SIM=verilator
+```
+
+For a quick hardware estimate log from the software protocol emulator:
+
+```sh
+scripts/run_emulator.sh --stats-interval 1
+```
+
 ## Software-Only Emulation And RTL Simulation
 
 Set up the Python tools:
@@ -138,18 +219,18 @@ make emu-smoke TARGET=tangnano9k
 scripts/launch_ubuntu_24_04.sh emu-smoke
 ```
 
-Run a software-only miner-style share log. This uses the Python hash model to
-find candidates, but reports the default `81 MHz / 16 cycles` RTL hashrate
-estimate so the output matches expected hardware behavior:
+Run a software-only miner-style share log. This uses the Python hash model and
+defaults to a `quick14` target with a `6 kH/s` software estimate, which averages
+about one candidate every `2.7` seconds:
 
 ```sh
 make software-mine
 make software-mine MINE_ARGS='--count 5'
 ```
 
-Use `--rate-source software` when you specifically want to see Python model
-speed instead of the hardware estimate. Use `--verbose` for scanned counts and
-timing detail.
+Use `--rate-source software` when you specifically want to see measured Python
+model speed, or `--rate-source hardware` for the RTL estimate. Use `--verbose`
+for scanned counts and timing detail.
 
 Run the software UART emulator as a pseudo-terminal:
 
@@ -189,10 +270,11 @@ The SpinalHDL cocotb suite includes a cycle-count hashrate check. It reports
 `source=rtl_cycles` by watching the RTL nonce counter and computing the
 hardware-rate estimate from simulated clock cycles, not simulator wall-clock
 time. On the Tang Nano 20K, the active four-lane pass-pipelined SHA-256 design
-uses an internal PLL to run the FPGA fabric at `81 MHz` and currently measures:
+uses an internal PLL to run the FPGA fabric at `100.286 MHz` and currently
+measures:
 
 ```text
-81 MHz / 16 clocks per aggregate nonce = 5.06 MH/s
+100.286 MHz / 16 clocks per aggregate nonce = 6.27 MH/s
 ```
 
 Set `HARDWARE_CLOCK_HZ` when running cocotb to report the same measured cycle
@@ -257,7 +339,7 @@ python scripts/serial_smoke.py --timeout 3 /dev/cu.usbserial-*
 
 The echo test should report `ECHO OK`. The hash test uses an easy all-ones target and should return an `F` response with a nonce. The script recomputes the double-SHA-256 hash on the host side, prints the candidate share difficulty in Bitcoin difficulty-1 units, and reports whether the returned nonce meets the requested target.
 
-For more frequent candidate output on the default `81 MHz` 20K build, use the
+For frequent candidate output on the default `100.286 MHz` 20K build, use the
 named `quick23` target:
 
 ```sh
@@ -308,13 +390,16 @@ The FPGA constructs the first-pass final block as:
 tail[12] || nonce_word[4] || 0x80 || zero padding || 0x00000280
 ```
 
-It then performs the second SHA-256 pass over the 32-byte first digest. The FPGA byte-reverses the final SHA digest for Bitcoin proof-of-work bit ordering, checks only the selected candidate prefix, and reports candidate nonces to the host. Recognized target aliases are:
+It then performs the second SHA-256 pass over the 32-byte first digest. The
+FPGA checks the selected prefix in Bitcoin's byte-reversed proof-of-work
+ordering without carrying a full 256-bit target comparator, then reports
+candidate nonces to the host. Recognized target aliases are:
 
 - `all-ones` / `easy`: always report the first checked nonce for smoke tests.
 - `quick3`: require the top 3 bits of `reverse_bytes(hash)` to be zero; this is used by the short RTL test.
 - `quick21`: require the top 21 bits of `reverse_bytes(hash)` to be zero.
-- `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero; this averages about 1.7 seconds per candidate on the 81 MHz 20K build and remains the default for arbitrary targets.
-- `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero; this averages about 13 seconds per candidate on the 81 MHz 20K build.
+- `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero; this averages about 1.3 seconds per candidate on the 100.286 MHz 20K build and remains the default for arbitrary targets.
+- `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero; this averages about 10.7 seconds per candidate on the 100.286 MHz 20K build.
 
 ### Found Response
 
@@ -402,7 +487,7 @@ The current Icarus testbenches exercise the legacy hand-written Verilog. SpinalH
 - 9K FPGA: `GW1NR-LV9QN88PC6/I5`
 - 9K family: `GW1N-9C`
 - Clock input: onboard `27 MHz`
-- 20K system clock: internal rPLL to `81 MHz`
+- 20K system clock: internal rPLL to `100.286 MHz`
 - 9K system clock: onboard `27 MHz`
 - UART: `115200 8N1`
 

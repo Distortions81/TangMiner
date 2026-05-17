@@ -37,15 +37,15 @@ The repository tools accept these target aliases:
 - `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero.
 - `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero.
 
-On the default `81 MHz` 20K build, `quick23` averages about 1.7 seconds per
-candidate with four pass-pipelined lanes:
+On the default `100.286 MHz` 20K build, `quick23` averages about 1.3 seconds
+per candidate with four pass-pipelined lanes:
 
 ```text
 000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 ```
 
 `quick26` is still available when quieter output is useful and averages about
-13 seconds per candidate. Arbitrary target values currently select the same
+10.7 seconds per candidate. Arbitrary target values currently select the same
 `quick23` hardware candidate filter. This keeps the FPGA comparator tiny and
 leaves exact share validation on the host.
 

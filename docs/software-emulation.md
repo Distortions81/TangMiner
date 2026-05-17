@@ -3,10 +3,22 @@
 These flows do not require a Tang Nano board. They serve different purposes:
 
 - `emu-smoke` runs the lightweight Python UART protocol emulator. This is useful for host software and packet-format testing.
+- `software-mine` runs a pure Python miner-style candidate loop and prints share-like log lines.
+- `hardware-mine` talks to a real serial port, or to the PTY emulator, using the same nonce-only hardware protocol as the FPGA.
 - `sim-cocotb` runs Python/cocotb tests against the hand-written Verilog top level.
 - `sim-cocotb-spinal` generates simulation-tuned SpinalHDL Verilog and runs the same cocotb UART tests against it.
 
 The Tang Nano target is board-independent for simulation. Use `TARGET=tangnano9k` when you want the rest of the Makefile and logs to match the Tang Nano 9K.
+
+The current 20K hardware model is:
+
+```text
+100.286 MHz / 16 aggregate clocks per nonce = 6.27 MH/s
+```
+
+The Python software miner intentionally defaults to a much easier `quick14`
+target and a `6 kH/s` software estimate so it prints a candidate every few
+seconds on a normal machine.
 
 ## Python Environment
 
@@ -68,17 +80,28 @@ without its automatic benchmark and point `hardware_mine.py` at the printed PTY:
 ```sh
 scripts/run_emulator.sh --no-auto-benchmark --max-nonces 1000 --stats-interval 0
 python scripts/hardware_mine.py --target quick3 --count 3 /dev/pts/N
+make hardware-mine MINE_ARGS='--target quick3 --count 3 /dev/pts/N'
 ```
 
 For a pure software candidate test, use:
 
 ```sh
-python scripts/software_mine_test.py --target quick3 --count 10
+python scripts/software_mine_test.py --count 10
+make software-mine MINE_ARGS='--count 10'
 ```
 
-The software test reports the RTL hardware hashrate estimate by default; add
-`--rate-source software` to display Python model speed. Both mining scripts
-print concise `share` lines by default; add `--verbose` for timing details.
+The software test defaults to `quick14` and a `6 kH/s` software estimate, which
+averages about one candidate every `2.7` seconds. Add `--rate-source software`
+to display measured Python model speed, or `--rate-source hardware` to display
+the RTL estimate. Both mining scripts print concise `share` lines by default;
+add `--verbose` for timing details.
+
+For a real board after loading or flashing the bitstream, use the same hardware
+miner script with the serial device:
+
+```sh
+make hardware-mine MINE_ARGS='--target quick23 --count 10 /dev/cu.usbserial-*'
+```
 
 ## RTL Simulation With Cocotb
 

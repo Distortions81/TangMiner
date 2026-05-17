@@ -21,7 +21,7 @@ flowchart LR
     digest1["First digest<br/>32 bytes"]
     second_block["Second-pass block<br/>digest1 || padding || 0x00000100"]
     comp2["Second-pass Sha256Compress<br/>64 rounds from SHA-256 IV"]
-    compare["Byte-reverse final digest<br/>cheap candidate prefix check"]
+    compare["Bitcoin-order digest prefix<br/>cheap candidate check"]
     found["F response<br/>selected nonce only"]
     next["current_nonce += 4<br/>start next first pass"]
 
@@ -47,14 +47,15 @@ standard SHA-256 padding.
 
 The second pass hashes the 32-byte first digest from the normal SHA-256 IV.
 While that second-pass compressor is busy, the first-pass compressor can already
-start the next nonce for the same lane. After the second pass, the lane
-byte-reverses the final digest so the cheap prefix check uses Bitcoin
-proof-of-work bit ordering. The FPGA does not contain the full 256-bit target
-comparator in the four-lane 20K path; the host validates the returned candidate
-nonce by rebuilding the header and double-hashing it. If more than one lane is
-reporting, the top level latches one selected result before UART transmit.
+start the next nonce for the same lane. After the second pass, the lane checks
+the final digest in Bitcoin's byte-reversed proof-of-work ordering. The
+implementation only wires the needed prefix bits for the selected quick filter;
+it does not build a full 256-bit reversed digest or target comparator in the
+four-lane 20K path. The host validates the returned candidate nonce by
+rebuilding the header and double-hashing it. If more than one lane is reporting,
+the top level latches one selected result before UART transmit.
 
-For bring-up with more frequent candidate output on the default `81 MHz` 20K
+For bring-up with frequent candidate output on the default `100.286 MHz` 20K
 build, the host tools accept the named target `quick23`:
 
 ```text
@@ -73,28 +74,30 @@ the host.
 flowchart TB
     start["start"]
     state_in["stateIn[255:0]"]
-    block["block[511:0]"]
+    words["message words[0..15]"]
 
     feed["Feed-forward base state<br/>held by BitcoinHashCore"]
     work["Working state regs<br/>a b c d e f g h"]
     schedule["16-word schedule shift regs<br/>w0..w15"]
+    wround["registered active word<br/>wRound"]
     round["round counter<br/>0..63"]
     k["K[round] constant"]
 
     wnext["wNext = smallSigma1(w14)<br/>+ w9 + smallSigma0(w1) + w0"]
-    t1["t1 = h + bigSigma1(e)<br/>+ ch(e,f,g) + K[round] + w0"]
+    t1["t1 = h + bigSigma1(e)<br/>+ ch(e,f,g) + K[round] + wRound"]
     t2["t2 = bigSigma0(a)<br/>+ maj(a,b,c)"]
     update["Round register update<br/>a'=t1+t2<br/>e'=d+t1<br/>b'=a, c'=b, d'=c<br/>f'=e, g'=f, h'=g"]
     final["Final addback<br/>digest = base state + final working state"]
     done["done"]
 
     start --> state_in
-    start --> block
+    start --> words
     state_in --> work
     state_in --> feed
-    block --> schedule
+    words --> schedule
     round --> k
-    schedule --> t1
+    schedule --> wround
+    wround --> t1
     schedule --> wnext
     k --> t1
     work --> t1
@@ -129,7 +132,7 @@ flowchart LR
       f((f))
       g((g))
       h((h))
-      w0((w0))
+      wr((wRound))
       kr(("K[round]"))
     end
 
@@ -152,7 +155,7 @@ flowchart LR
     s1 --> t1
     ch --> t1
     kr --> t1
-    w0 --> t1
+    wr --> t1
 
     a --> s0
     a --> maj
@@ -173,7 +176,9 @@ flowchart LR
     g --> shifts
 ```
 
-The compressor performs exactly one SHA-256 round per clock while busy. Round
+The compressor performs exactly one SHA-256 round per clock while busy. The
+active schedule word is registered as `wRound` so the round datapath does not
+read directly through the shifting schedule window. Round
 `63` produces the final working values. `BitcoinHashCore` then adds those words
 back into the correct feed-forward base state: the host-provided midstate for
 the first pass, or the fixed SHA-256 IV for the second pass. Keeping that
