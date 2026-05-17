@@ -44,7 +44,7 @@ EMU_TARGET ?= $(TARGET)
 EMU_ARGS ?=
 MINE_ARGS ?=
 
-.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine check-cocotb sim-cocotb sim-cocotb-spinal
+.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine stratum-client stratum-test check-cocotb sim-cocotb sim-cocotb-spinal
 
 all: build
 
@@ -135,6 +135,12 @@ software-mine:
 hardware-mine:
 	$(PYTHON) scripts/hardware_mine.py $(MINE_ARGS)
 
+stratum-client:
+	$(MAKE) -C stratum
+
+stratum-test:
+	$(MAKE) -C stratum test
+
 check-cocotb:
 	@$(PYTHON) -c "import cocotb" >/dev/null 2>&1 || { echo "cocotb is not installed. Run: make setup-emulation && . .venv/bin/activate"; exit 1; }
 	@if [ "$(SIM)" = "verilator" ]; then PATH="$(TOOLBIN):$$PATH"; if ! command -v verilator >/dev/null 2>&1; then echo "verilator is not on PATH. Install OSS CAD Suite or your distro's verilator package."; exit 127; fi; fi
@@ -148,3 +154,4 @@ sim-cocotb-spinal: $(SPINAL_SIM_SRC) check-cocotb
 
 clean:
 	rm -rf $(BUILD)
+	$(MAKE) -C stratum clean
