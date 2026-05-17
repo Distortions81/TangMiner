@@ -35,17 +35,19 @@ The repository tools accept these target aliases:
 - `quick3`: require the top 3 bits of `reverse_bytes(hash)` to be zero.
 - `quick21`: require the top 21 bits of `reverse_bytes(hash)` to be zero.
 - `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero.
+- `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero.
 
-At the default `27 MHz` clock, `quick23` averages roughly 10 seconds per
-candidate with four lanes:
+On the default `81 MHz` 20K build, `quick23` averages about 1.7 seconds per
+candidate with four pass-pipelined lanes:
 
 ```text
 000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 ```
 
-Arbitrary target values currently select the same `quick23` hardware candidate
-filter. This keeps the FPGA comparator tiny and leaves exact share validation on
-the host.
+`quick26` is still available when quieter output is useful and averages about
+13 seconds per candidate. Arbitrary target values currently select the same
+`quick23` hardware candidate filter. This keeps the FPGA comparator tiny and
+leaves exact share validation on the host.
 
 The FPGA constructs the final first-pass SHA-256 block as:
 
@@ -54,8 +56,8 @@ tail[0:12] || nonce || 0x80 || zero padding || 0x00000280
 ```
 
 The current 20K bitstream starts four internal lanes at nonces `0`, `1`, `2`,
-and `3`; each lane then increments by `4`. Each lane performs the second
-SHA-256 pass over the 32-byte first digest.
+and `3`; each lane then increments by `4`. Each lane overlaps a first-pass
+compressor with a second-pass compressor over the previous first digest.
 
 ## Stop Job
 

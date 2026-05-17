@@ -5,11 +5,17 @@ BOARD := tangnano9k
 FAMILY := GW1N-9C
 DEVICE := GW1NR-LV9QN88PC6/I5
 CST := constr/tangnano9k.cst
+SPINAL_USE_PLL ?= 0
+SPINAL_CLOCK_MHZ ?= 27
+SPINAL_CLKS_PER_BIT ?= 234
 else ifeq ($(TARGET),tangnano20k)
 BOARD := tangnano20k
 FAMILY := GW2A-18C
 DEVICE := GW2AR-LV18QN88C8/I7
 CST := constr/tangnano20k.cst
+SPINAL_USE_PLL ?= 1
+SPINAL_CLOCK_MHZ ?= 81
+SPINAL_CLKS_PER_BIT ?= 703
 else
 $(error Unsupported TARGET '$(TARGET)'. Use tangnano20k or tangnano9k)
 endif
@@ -17,7 +23,8 @@ endif
 TOP := top
 BUILD := build
 SRC := src/top.v src/uart_rx.v src/uart_tx.v src/bitcoin_hash_core.v src/sha256_compress.v
-SPINAL_SRC := $(BUILD)/spinal/top.v
+SPINAL_DIR := $(BUILD)/spinal/$(TARGET)
+SPINAL_SRC := $(SPINAL_DIR)/top.v
 SPINAL_SIM_SRC := $(BUILD)/spinal-sim/top.v
 SPINAL_PREFIX := $(BUILD)/tangminer_spinal_$(TARGET)
 VERILOG_PREFIX := $(BUILD)/tangminer_verilog_$(TARGET)
@@ -35,8 +42,9 @@ PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,$(if $(wildcard .
 SIM ?= verilator
 EMU_TARGET ?= $(TARGET)
 EMU_ARGS ?=
+MINE_ARGS ?=
 
-.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty check-cocotb sim-cocotb sim-cocotb-spinal
+.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine check-cocotb sim-cocotb sim-cocotb-spinal
 
 all: build
 
@@ -55,7 +63,8 @@ $(BUILD)/.dir:
 	touch $@
 
 $(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties | $(BUILD)/.dir
-	$(SBT) "runMain tangminer.GenerateVerilog"
+	mkdir -p $(SPINAL_DIR)
+	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) $(SBT) "runMain tangminer.GenerateVerilog"
 
 $(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties | $(BUILD)/.dir
 	$(SBT) "runMain tangminer.GenerateSimVerilog"
@@ -73,7 +82,7 @@ $(SPINAL_PREFIX).json: $(SPINAL_SRC) | $(BUILD)/.dir
 	$(YOSYS) -p "read_verilog $(SPINAL_SRC); synth_gowin -top $(TOP) -json $@"
 
 $(SPINAL_PREFIX)_pnr.json: $(SPINAL_PREFIX).json $(CST)
-	$(NEXTPNR) --json $< --write $@ --freq 27 --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST)
+	$(NEXTPNR) --json $< --write $@ --freq $(SPINAL_CLOCK_MHZ) --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST)
 
 $(SPINAL_PREFIX).fs: $(SPINAL_PREFIX)_pnr.json
 	$(GOWIN_PACK) -d $(FAMILY) -o $@ $<
@@ -119,6 +128,12 @@ emu-smoke:
 
 emu-pty:
 	$(PYTHON) scripts/tangminer_emulator.py --board $(EMU_TARGET) --pty $(EMU_ARGS)
+
+software-mine:
+	$(PYTHON) scripts/software_mine_test.py $(MINE_ARGS)
+
+hardware-mine:
+	$(PYTHON) scripts/hardware_mine.py $(MINE_ARGS)
 
 check-cocotb:
 	@$(PYTHON) -c "import cocotb" >/dev/null 2>&1 || { echo "cocotb is not installed. Run: make setup-emulation && . .venv/bin/activate"; exit 1; }

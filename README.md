@@ -95,7 +95,7 @@ Build the default Tang Nano 20K SpinalHDL bitstream:
 make build
 ```
 
-This generates `build/spinal/top.v` from `src/main/scala/tangminer/TangMiner.scala`, synthesizes it, runs place and route, and writes a target-specific bitstream such as `build/tangminer_spinal_tangnano20k.fs`.
+This generates target-specific Verilog such as `build/spinal/tangnano20k/top.v` from `src/main/scala/tangminer/TangMiner.scala`, synthesizes it, runs place and route, and writes a target-specific bitstream such as `build/tangminer_spinal_tangnano20k.fs`.
 
 Build with the Tang Nano 9K constraints. The current four-lane SpinalHDL design
 is not area-validated for 9K:
@@ -138,6 +138,19 @@ make emu-smoke TARGET=tangnano9k
 scripts/launch_ubuntu_24_04.sh emu-smoke
 ```
 
+Run a software-only miner-style share log. This uses the Python hash model to
+find candidates, but reports the default `81 MHz / 16 cycles` RTL hashrate
+estimate so the output matches expected hardware behavior:
+
+```sh
+make software-mine
+make software-mine MINE_ARGS='--count 5'
+```
+
+Use `--rate-source software` when you specifically want to see Python model
+speed instead of the hardware estimate. Use `--verbose` for scanned counts and
+timing detail.
+
 Run the software UART emulator as a pseudo-terminal:
 
 ```sh
@@ -175,11 +188,11 @@ scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
 The SpinalHDL cocotb suite includes a cycle-count hashrate check. It reports
 `source=rtl_cycles` by watching the RTL nonce counter and computing the
 hardware-rate estimate from simulated clock cycles, not simulator wall-clock
-time. At the default Tang Nano `27 MHz` clock, the active four-lane compact
-SHA-256 design currently measures:
+time. On the Tang Nano 20K, the active four-lane pass-pipelined SHA-256 design
+uses an internal PLL to run the FPGA fabric at `81 MHz` and currently measures:
 
 ```text
-27 MHz / 32 clocks per aggregate nonce = 843.75 kH/s
+81 MHz / 16 clocks per aggregate nonce = 5.06 MH/s
 ```
 
 Set `HARDWARE_CLOCK_HZ` when running cocotb to report the same measured cycle
@@ -242,14 +255,23 @@ python scripts/serial_smoke.py --echo --timeout 2 /dev/cu.usbserial-*
 python scripts/serial_smoke.py --timeout 3 /dev/cu.usbserial-*
 ```
 
-The echo test should report `ECHO OK`. The hash test uses an easy all-ones target and should return an `F` response with a nonce. The script recomputes the double-SHA-256 hash on the host side for validation.
+The echo test should report `ECHO OK`. The hash test uses an easy all-ones target and should return an `F` response with a nonce. The script recomputes the double-SHA-256 hash on the host side, prints the candidate share difficulty in Bitcoin difficulty-1 units, and reports whether the returned nonce meets the requested target.
 
-For a roughly 10-second candidate interval at the default `27 MHz` clock, use the
+For more frequent candidate output on the default `81 MHz` 20K build, use the
 named `quick23` target:
 
 ```sh
-python scripts/serial_smoke.py --target quick23 --timeout 20 /dev/cu.usbserial-*
+python scripts/serial_smoke.py --target quick23 --watch --timeout 10 /dev/cu.usbserial-*
 ```
+
+For a hardware miner-style share log:
+
+```sh
+make hardware-mine MINE_ARGS='/dev/cu.usbserial-*'
+```
+
+Use `--verbose` to include observed serial round-trip rate and timing detail on
+each share line.
 
 ## Host Serial Protocol
 
@@ -291,7 +313,8 @@ It then performs the second SHA-256 pass over the 32-byte first digest. The FPGA
 - `all-ones` / `easy`: always report the first checked nonce for smoke tests.
 - `quick3`: require the top 3 bits of `reverse_bytes(hash)` to be zero; this is used by the short RTL test.
 - `quick21`: require the top 21 bits of `reverse_bytes(hash)` to be zero.
-- `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero; this is the default for arbitrary targets and averages roughly 10 seconds per candidate with four lanes at 27 MHz.
+- `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero; this averages about 1.7 seconds per candidate on the 81 MHz 20K build and remains the default for arbitrary targets.
+- `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero; this averages about 13 seconds per candidate on the 81 MHz 20K build.
 
 ### Found Response
 
@@ -357,7 +380,7 @@ This starts a built-in genesis-style easy-target test job. It exists for bring-u
 ```sh
 python3 scripts/make_job.py \
   --header <80-byte-header-hex> \
-  --target <32-byte-big-endian-target-hex|quick23|quick21|quick3|all-ones> \
+  --target <32-byte-big-endian-target-hex|quick26|quick23|quick21|quick3|all-ones> \
   > job.bin
 ```
 
@@ -378,7 +401,9 @@ The current Icarus testbenches exercise the legacy hand-written Verilog. SpinalH
 - 20K family: `GW2A-18C`
 - 9K FPGA: `GW1NR-LV9QN88PC6/I5`
 - 9K family: `GW1N-9C`
-- Clock: onboard `27 MHz`
+- Clock input: onboard `27 MHz`
+- 20K system clock: internal rPLL to `81 MHz`
+- 9K system clock: onboard `27 MHz`
 - UART: `115200 8N1`
 
 The LED, clock, and UART pins follow the board-specific constraints in `constr/`.

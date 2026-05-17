@@ -13,11 +13,14 @@ from tangminer_emulator import (
     build_job_from_header,
     encode_job_payload,
     format_rate,
+    meets_target,
+    share_difficulty,
+    target_difficulty,
 )
 
 
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
-HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "27000000"))
+HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "81000000"))
 LANE_COUNT = 4
 
 
@@ -140,6 +143,7 @@ async def top_hashes_genesis_nonce_zero(dut):
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x00\x00"
     assert bitcoin_hash(job, 0) == GENESIS_EXPECTED_HASH_NONCE_ZERO
+    assert meets_target(GENESIS_EXPECTED_HASH_NONCE_ZERO, ALL_ONES_TARGET)
 
 
 @cocotb.test()
@@ -156,7 +160,8 @@ async def top_hashes_genesis_nonce_three(dut):
     response = await _uart_read(dut, 5)
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x00\x03"
-    assert expected_hash[::-1][0] & 0xE0 == 0
+    assert meets_target(expected_hash, QUICK3_TARGET)
+    assert share_difficulty(expected_hash) >= target_difficulty(QUICK3_TARGET)
 
 
 @cocotb.test()

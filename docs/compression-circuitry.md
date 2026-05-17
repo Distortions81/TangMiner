@@ -1,9 +1,9 @@
 # Compression Circuitry
 
 TangMiner uses four compact iterative SHA-256 lanes on the Tang Nano 20K. Each
-lane has one `Sha256Compress` block, does not unroll the 64 SHA-256 rounds, and
-does not duplicate the compressor for the second hash pass. Instead, each
-`BitcoinHashCore` lane drives its own `Sha256Compress` block twice per nonce.
+lane has two `Sha256Compress` blocks: one dedicated to the first Bitcoin
+SHA-256 pass and one dedicated to the second pass. The 64 SHA-256 rounds are
+still not unrolled; each compressor performs one round per FPGA clock.
 
 The top level gives the lanes different nonce residue classes: starts `0..3`
 and stride `4`. The diagrams below show the datapath inside one lane unless
@@ -17,10 +17,10 @@ flowchart LR
     lanes["4 lane wrapper<br/>start nonce 0..3<br/>stride = 4"]
     regs["Lane job registers<br/>midstate, tail, candidate mode<br/>current_nonce"]
     first_block["First-pass final block<br/>tail || nonce || padding || 0x00000280"]
-    comp1["Lane Sha256Compress<br/>64 rounds from host midstate"]
+    comp1["First-pass Sha256Compress<br/>64 rounds from host midstate"]
     digest1["First digest<br/>32 bytes"]
     second_block["Second-pass block<br/>digest1 || padding || 0x00000100"]
-    comp2["Same lane Sha256Compress<br/>64 rounds from SHA-256 IV"]
+    comp2["Second-pass Sha256Compress<br/>64 rounds from SHA-256 IV"]
     compare["Byte-reverse final digest<br/>cheap candidate prefix check"]
     found["F response<br/>selected nonce only"]
     next["current_nonce += 4<br/>start next first pass"]
@@ -46,15 +46,16 @@ final 64-byte first-pass block from `tail`, the lane's current nonce word, and
 standard SHA-256 padding.
 
 The second pass hashes the 32-byte first digest from the normal SHA-256 IV.
-After that, the lane byte-reverses the final digest so the cheap prefix check
-uses Bitcoin proof-of-work bit ordering. The FPGA does not contain the full
-256-bit target comparator in the four-lane 20K path; the host validates the
-returned candidate nonce by rebuilding the header and double-hashing it. If more
-than one lane is reporting, the top level latches one selected result before
-UART transmit.
+While that second-pass compressor is busy, the first-pass compressor can already
+start the next nonce for the same lane. After the second pass, the lane
+byte-reverses the final digest so the cheap prefix check uses Bitcoin
+proof-of-work bit ordering. The FPGA does not contain the full 256-bit target
+comparator in the four-lane 20K path; the host validates the returned candidate
+nonce by rebuilding the header and double-hashing it. If more than one lane is
+reporting, the top level latches one selected result before UART transmit.
 
-For bring-up and roughly 10-second candidate testing at the default `27 MHz` clock,
-the host tools accept the named target `quick23`:
+For bring-up with more frequent candidate output on the default `81 MHz` 20K
+build, the host tools accept the named target `quick23`:
 
 ```text
 000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
@@ -62,9 +63,9 @@ the host tools accept the named target `quick23`:
 
 That target is equivalent to requiring the top 23 bits of the byte-reversed
 digest to be zero. The bitstream also recognizes `all-ones` for immediate smoke
-tests, `quick3` for short RTL tests, and `quick21` as an easier legacy candidate
-filter. Arbitrary target packets currently use the same `quick23` hardware
-filter and leave exact validation to the host.
+tests, `quick3` for short RTL tests, `quick21` as an easier legacy candidate
+filter, and `quick26` for quieter candidate output. Exact validation remains on
+the host.
 
 ## Compressor Datapath
 
@@ -184,35 +185,37 @@ starting-state registers inside the round engine.
 ```mermaid
 sequenceDiagram
     participant Core as One BitcoinHashCore lane
-    participant SHA as Lane Sha256Compress
+    participant SHA1 as First-pass Sha256Compress
+    participant SHA2 as Second-pass Sha256Compress
 
-    Core->>SHA: start, stateIn=midstate, block=tail||nonce||pad
-    Note over SHA: 64 busy clocks, rounds 0..63
-    SHA-->>Core: done, workOut=first pass final working state
+    Core->>SHA1: start, stateIn=midstate, block=tail||nonce||pad
+    Note over SHA1: 64 busy clocks, rounds 0..63
+    SHA1-->>Core: done, workOut=first pass final working state
     Core->>Core: add host midstate feed-forward to make first_digest
-    Core->>SHA: start, stateIn=SHA256_IV, block=first_digest||pad
-    Note over SHA: 64 busy clocks, rounds 0..63
-    SHA-->>Core: done, workOut=second pass final working state
+    Core->>SHA2: start, stateIn=SHA256_IV, block=first_digest||pad
+    Core->>SHA1: start next lane nonce first pass
+    Note over SHA1,SHA2: both compressors run for the next 64 clocks
+    SHA2-->>Core: done, workOut=second pass final working state
     Core->>Core: add SHA256_IV feed-forward to make final_digest
     Core->>Core: check reversed final digest prefix
     alt share found
         Core->>Core: latch found nonce
     else no share
-        Core->>SHA: immediately start next lane nonce first pass
+        Core->>SHA2: load previous first_digest into second pass
+        Core->>SHA1: start another lane nonce first pass
     end
 ```
 
-In steady state the second-pass `done` cycle also launches the first pass for
-the next nonce. That overlap at the control boundary is why the measured
-per-lane throughput is `128` clocks per nonce rather than `130` or more: each
-nonce still does two 64-round compression passes, but there are no extra idle
-cycles between nonces once scanning is running. With four lanes in parallel,
-the aggregate chip cadence is one tested nonce every `32` clocks.
+In steady state, the first-pass compressor launches a new lane nonce every `64`
+clocks while the second-pass compressor checks the previous first digest. Each
+lane therefore produces one tested nonce every `64` clocks after the initial
+fill. With four lanes in parallel, the aggregate chip cadence is one tested
+nonce every `16` clocks.
 
 ## Source Pointers
 
 - `Sha256Compress` is implemented in `src/main/scala/tangminer/TangMiner.scala`.
-- `BitcoinHashCore` constructs the two SHA-256 blocks, sequences the compressor,
+- `BitcoinHashCore` constructs the two SHA-256 blocks, sequences the compressors,
   increments the lane nonce by the configured stride, and performs the candidate
   prefix check.
 - `src/sha256_compress.v` is the legacy hand-written Verilog compressor kept for

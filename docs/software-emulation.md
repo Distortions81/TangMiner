@@ -62,6 +62,24 @@ Use `--stats-source software` only when you want to measure the software model i
 
 This emulator does not execute RTL. It is only a host/protocol model.
 
+To exercise the hardware mining loop without a board, start the PTY emulator
+without its automatic benchmark and point `hardware_mine.py` at the printed PTY:
+
+```sh
+scripts/run_emulator.sh --no-auto-benchmark --max-nonces 1000 --stats-interval 0
+python scripts/hardware_mine.py --target quick3 --count 3 /dev/pts/N
+```
+
+For a pure software candidate test, use:
+
+```sh
+python scripts/software_mine_test.py --target quick3 --count 10
+```
+
+The software test reports the RTL hardware hashrate estimate by default; add
+`--rate-source software` to display Python model speed. Both mining scripts
+print concise `share` lines by default; add `--verbose` for timing details.
+
 ## RTL Simulation With Cocotb
 
 Install a Verilog simulator. OSS CAD Suite is the simplest because it includes Verilator, Icarus Verilog, and the Gowin build tools used by the rest of the project:
@@ -108,7 +126,7 @@ scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
 ```
 
 This uses `GenerateSimVerilog`, which keeps the production top-level ports but
-shortens the UART divider and reset counter for simulation. The normal
-`make build` path still uses production timing and the current four-lane default,
-which is focused on Tang Nano 20K.
+shortens the UART divider and reset counter for simulation and bypasses the
+20K production PLL. The normal `make build` path still uses production timing
+and the current four-lane default, which is focused on Tang Nano 20K.
 The SpinalHDL cocotb run also prints a `source=rtl_cycles` hashrate line derived from RTL nonce-counter cycles, so that estimate is independent of simulator wall-clock speed.

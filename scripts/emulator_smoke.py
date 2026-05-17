@@ -1,13 +1,29 @@
 #!/usr/bin/env python3
+from make_job import format_difficulty
 from tangminer_emulator import (
     ALL_ONES_TARGET,
     GENESIS_EXPECTED_HASH_NONCE_ZERO,
     GENESIS_HEADER,
+    QUICK21_TARGET,
+    QUICK23_TARGET,
+    QUICK26_TARGET,
     QUICK3_TARGET,
     TangMinerEmulator,
     bitcoin_hash,
     build_job_from_header,
     encode_job_payload,
+    meets_hardware_candidate_filter,
+    meets_target,
+    share_difficulty,
+    target_difficulty,
+)
+
+
+EXPECTED_ALIAS_CANDIDATES = (
+    (QUICK3_TARGET, 3, "1498a37b8059cca064bcc16d7a727156907beb5d9bd4641b003b09d911b00f1c"),
+    (QUICK21_TARGET, 213373, "d4dfb69f98e5c3c36efdb8aa134677f0b229f658fdc35c1747a474a552040000"),
+    (QUICK23_TARGET, 7651038, "0a66cd262862865f93e08fb0e80ecd2bc52dcf58100842a9a11c1e9473000000"),
+    (QUICK26_TARGET, 26309569, "762334dca2a62282076426cb814d6a8a3de7ff57bb4f2754895b695726000000"),
 )
 
 
@@ -16,6 +32,22 @@ def feed_bytewise(emulator, packet):
     for byte in packet:
         response.extend(emulator.feed(bytes([byte])))
     return bytes(response)
+
+
+def validate_candidate(job, nonce, expected_hash_hex=None):
+    digest = bitcoin_hash(job, nonce)
+    if expected_hash_hex and digest.hex() != expected_hash_hex:
+        raise SystemExit(f"FAIL hash for nonce {nonce}: {digest.hex()}")
+    if not meets_hardware_candidate_filter(digest, job.target):
+        raise SystemExit(f"FAIL hardware candidate filter for nonce {nonce}")
+    if not meets_target(digest, job.target):
+        raise SystemExit(f"FAIL exact target validation for nonce {nonce}")
+    if share_difficulty(digest) < target_difficulty(job.target):
+        raise SystemExit(
+            "FAIL share difficulty below target: "
+            f"share={format_difficulty(share_difficulty(digest))} "
+            f"target={format_difficulty(target_difficulty(job.target))}"
+        )
 
 
 def main():
@@ -34,6 +66,7 @@ def main():
         raise SystemExit(f"FAIL nonce: {found[1:5].hex()}")
     if bitcoin_hash(job, 0) != GENESIS_EXPECTED_HASH_NONCE_ZERO:
         raise SystemExit("FAIL host hash validation")
+    validate_candidate(job, 0, GENESIS_EXPECTED_HASH_NONCE_ZERO.hex())
 
     quick3_job = build_job_from_header(GENESIS_HEADER, QUICK3_TARGET)
     quick3_payload = encode_job_payload(quick3_job)
@@ -42,8 +75,10 @@ def main():
         raise SystemExit(f"FAIL quick3 found response: {quick3_found.hex()}")
     if quick3_found[1:5] != b"\x00\x00\x00\x03":
         raise SystemExit(f"FAIL quick3 nonce: {quick3_found[1:5].hex()}")
-    if bitcoin_hash(quick3_job, 3)[::-1][0] & 0xE0:
-        raise SystemExit("FAIL quick3 host hash validation")
+    validate_candidate(quick3_job, 3)
+
+    for target, nonce, digest_hex in EXPECTED_ALIAS_CANDIDATES:
+        validate_candidate(build_job_from_header(GENESIS_HEADER, target), nonce, digest_hex)
 
     hardcoded = feed_bytewise(emulator, b"TNH")
     if hardcoded != found:

@@ -38,7 +38,7 @@
 
   <rect class="bg" x="0" y="0" width="1500" height="960"/>
   <text class="title" x="48" y="48">TangMiner Hardware Overview</text>
-  <text class="subtitle" x="48" y="74">Logical datapath after SpinalHDL generation and FPGA synthesis: four compact lanes, each reusing one iterative SHA-256 compressor for both Bitcoin hash passes.</text>
+  <text class="subtitle" x="48" y="74">Logical datapath after SpinalHDL generation and FPGA synthesis: four compact lanes, each with first-pass and second-pass iterative SHA-256 compressors.</text>
 
   <rect class="host" x="44" y="118" width="230" height="150" rx="8"/>
   <text class="label" x="70" y="152">Host Miner</text>
@@ -49,7 +49,7 @@
 
   <rect class="fpga" x="320" y="104" width="1132" height="758"/>
   <text class="sectionLabel" x="344" y="136">Tang Nano FPGA fabric</text>
-  <text class="tiny" x="344" y="158">Gowin LUTs, flip-flops, carry chains, IO buffers, and routing</text>
+  <text class="tiny" x="344" y="158">27 MHz input through internal rPLL to 81 MHz hash clock</text>
 
   <rect class="box" x="356" y="198" width="150" height="98" rx="8"/>
   <text class="label" x="389" y="227">UART RX</text>
@@ -92,15 +92,15 @@
   <text class="metric" x="640" y="620">area: small wiring; cycles: feeds pass 2</text>
 
   <rect class="control" x="896" y="425" width="114" height="130" rx="8"/>
-  <text class="label" x="919" y="456">Mux</text>
-  <text class="small" x="918" y="485">stateIn</text>
-  <text class="small" x="924" y="508">block</text>
-  <text class="tiny" x="912" y="529">pass select</text>
-  <text class="metric" x="908" y="548">area: small</text>
+  <text class="label" x="907" y="456">Pass Pipeline</text>
+  <text class="small" x="917" y="485">first nonce</text>
+  <text class="small" x="910" y="508">second nonce</text>
+  <text class="tiny" x="908" y="529">launch gates</text>
+  <text class="metric" x="908" y="548">area: small regs/control</text>
 
   <rect class="sha" x="1074" y="270" width="314" height="260" rx="10"/>
-  <text class="label" x="1112" y="303">4x Sha256Compress</text>
-  <text class="small" x="1113" y="330">one 64-round iterative engine per lane</text>
+  <text class="label" x="1108" y="303">8x Sha256Compress</text>
+  <text class="small" x="1110" y="330">two 64-round iterative engines per lane</text>
   <rect class="box" x="1102" y="354" width="122" height="58" rx="6"/>
   <text class="small" x="1122" y="379">a..h regs</text>
   <text class="tiny" x="1116" y="399">working state</text>
@@ -114,7 +114,7 @@
   <text class="small" x="1257" y="455">Adders</text>
   <text class="tiny" x="1251" y="475">sigma/ch/maj</text>
   <text class="mono" x="1136" y="510">done after round 63</text>
-  <text class="metric" x="1108" y="526">area: dominant; cycles: 64/pass, 128/nonce/lane</text>
+  <text class="metric" x="1108" y="526">area: dominant; cycles: 64/lane stage</text>
 
   <rect class="core" x="1074" y="584" width="314" height="98" rx="8"/>
   <text class="label" x="1130" y="615">Feed-Forward Add</text>
@@ -149,8 +149,8 @@
 
   <rect class="note" x="618" y="846" width="770" height="74" rx="8"/>
   <text class="label" x="645" y="876">Steady-state throughput</text>
-  <text class="small" x="645" y="899">Each lane spends 128 clocks per nonce. Four parallel lanes give one aggregate tested nonce every 32 clocks, about 843.75 kH/s at 27 MHz.</text>
-  <text class="metric" x="645" y="916">Area labels are approximate relative 20K synthesis weight; the four SHA compressors dominate LUT/carry usage.</text>
+  <text class="small" x="645" y="899">Each lane launches a new nonce every 64 clocks. Four parallel lanes give one aggregate tested nonce every 16 clocks, about 5.06 MH/s at 81 MHz.</text>
+  <text class="metric" x="645" y="916">Area labels are approximate relative 20K synthesis weight; the eight SHA compressors dominate LUT/carry usage.</text>
 
   <path class="arrowBlue" d="M 274 193 C 300 193 320 230 356 238"/>
   <text class="tiny" x="286" y="178">serial bytes</text>
@@ -167,7 +167,7 @@
   <path class="arrow" d="M 976 245 C 1036 245 1040 348 1074 386"/>
   <text class="tiny" x="989" y="258">midstate / target</text>
   <path class="arrowGreen" d="M 1010 490 L 1074 400"/>
-  <text class="tiny" x="1006" y="459">stateIn + block</text>
+  <text class="tiny" x="1006" y="459">start pass 1 / pass 2</text>
   <path class="arrowGreen" d="M 1231 530 L 1231 584"/>
   <text class="tiny" x="1242" y="558">workOut</text>
   <path class="arrowGreen" d="M 1074 632 C 984 632 952 600 844 575"/>
@@ -182,7 +182,7 @@
   <path class="arrowBlue" d="M 356 738 C 282 738 250 304 190 268"/>
   <text class="tiny" x="252" y="752">F response</text>
   <path class="arrow dash" d="M 496 454 L 896 490"/>
-  <text class="tiny" x="641" y="500">control: first/second pass</text>
+  <text class="tiny" x="641" y="500">control: overlapping pass pipeline</text>
   <path class="arrow dash" d="M 461 662 L 461 694"/>
   <text class="tiny" x="486" y="672">LEDs expose nonce bits</text>
 </svg>

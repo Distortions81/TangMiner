@@ -23,7 +23,12 @@ from make_job import (
     QUICK3_TARGET,
     QUICK21_TARGET,
     QUICK23_TARGET,
+    QUICK26_TARGET,
     compress,
+    meets_target,
+    pow_hash_value,
+    share_difficulty,
+    target_difficulty,
     words_to_bytes,
 )
 
@@ -40,8 +45,8 @@ GENESIS_HEADER = bytes.fromhex(
 GENESIS_EXPECTED_HASH_NONCE_ZERO = bytes.fromhex(
     "bf483998a9b44cbf5a113973e34da96b5cf3c7757d75ac3bd7c6b30af5a7c12b"
 )
-DEFAULT_HARDWARE_CLOCK_HZ = 27_000_000
-MEASURED_HARDWARE_CYCLES_PER_NONCE = 32
+DEFAULT_HARDWARE_CLOCK_HZ = 81_000_000
+MEASURED_HARDWARE_CYCLES_PER_NONCE = 16
 
 
 @dataclass(frozen=True)
@@ -92,10 +97,6 @@ def bitcoin_hash(job: Job, nonce: int) -> bytes:
     return words_to_bytes(compress(IV, second_block))
 
 
-def meets_target(digest: bytes, target: bytes) -> bool:
-    return int.from_bytes(digest[::-1], "big") <= int.from_bytes(target, "big")
-
-
 def candidate_zero_bits_for_target(target: bytes) -> int:
     if target == ALL_ONES_TARGET:
         return 0
@@ -103,6 +104,8 @@ def candidate_zero_bits_for_target(target: bytes) -> int:
         return 3
     if target == QUICK21_TARGET:
         return 21
+    if target == QUICK26_TARGET:
+        return 26
     return 23
 
 
@@ -110,7 +113,7 @@ def meets_hardware_candidate_filter(digest: bytes, target: bytes) -> bool:
     zero_bits = candidate_zero_bits_for_target(target)
     if zero_bits == 0:
         return True
-    value = int.from_bytes(digest[::-1], "big")
+    value = pow_hash_value(digest)
     return value >> (256 - zero_bits) == 0
 
 

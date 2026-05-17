@@ -8,6 +8,11 @@ ALL_ONES_TARGET = b"\xff" * 32
 QUICK3_TARGET = bytes.fromhex("1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 QUICK21_TARGET = bytes.fromhex("000007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 QUICK23_TARGET = bytes.fromhex("000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+QUICK26_TARGET = bytes.fromhex("0000003fffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+DIFFICULTY_1_TARGET = int(
+    "00000000ffff0000000000000000000000000000000000000000000000000000",
+    16,
+)
 
 IV = (
     0x6A09E667,
@@ -68,6 +73,62 @@ def words_to_bytes(words):
     return b"".join(word.to_bytes(4, "big") for word in words)
 
 
+def pow_hash_value(digest):
+    return int.from_bytes(digest[::-1], "big")
+
+
+def meets_target(digest, target):
+    return pow_hash_value(digest) <= int.from_bytes(target, "big")
+
+
+def share_difficulty(digest):
+    value = pow_hash_value(digest)
+    if value == 0:
+        return float("inf")
+    return DIFFICULTY_1_TARGET / value
+
+
+def target_difficulty(target):
+    value = int.from_bytes(target, "big")
+    if value == 0:
+        return float("inf")
+    return DIFFICULTY_1_TARGET / value
+
+
+def format_difficulty(difficulty):
+    if difficulty == float("inf"):
+        return "inf"
+    if difficulty == 0:
+        return "0"
+    if difficulty < 0.001 or difficulty >= 1_000_000:
+        return f"{difficulty:.6e}"
+    return f"{difficulty:.6f}".rstrip("0").rstrip(".")
+
+
+def format_difficulty_units(difficulty):
+    if difficulty == float("inf"):
+        return "inf D"
+    if difficulty == 0:
+        return "0 D"
+
+    units = (
+        (1_000_000_000_000.0, "TD"),
+        (1_000_000_000.0, "GD"),
+        (1_000_000.0, "MD"),
+        (1_000.0, "kD"),
+        (1.0, "D"),
+        (0.001, "mD"),
+        (0.000001, "uD"),
+        (0.000000001, "nD"),
+        (0.000000000001, "pD"),
+    )
+    abs_difficulty = abs(difficulty)
+    for scale, suffix in units:
+        if abs_difficulty >= scale:
+            return f"{format_difficulty(difficulty / scale)} {suffix}"
+    return f"{difficulty:.6e} D"
+
+
 def parse_target(value):
     name = value.lower().replace("_", "-")
     if name in ("all-ones", "allones", "easy"):
@@ -78,6 +139,8 @@ def parse_target(value):
         return QUICK21_TARGET
     if name in ("quick23", "quick-23", "10s", "ten-second", "ten-seconds", "10s4", "ten-second-4-lane", "ten-seconds-4-lane"):
         return QUICK23_TARGET
+    if name in ("quick26", "quick-26"):
+        return QUICK26_TARGET
     return bytes.fromhex(value)
 
 
@@ -87,7 +150,7 @@ def main():
     parser.add_argument(
         "--target",
         required=True,
-        help="32-byte big-endian target hex, or alias quick23/quick21/quick3/all-ones",
+        help="32-byte big-endian target hex, or alias quick23/quick26/quick21/quick3/all-ones",
     )
     parser.add_argument("--verify", action="store_true", help="print the double-SHA256 hash for the header")
     args = parser.parse_args()
