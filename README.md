@@ -30,6 +30,8 @@ Defaults:
 - Worker: `3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45`
 - Software FPGA gate: `quick3`
 - Suggested difficulty: `0.0000046566`, about `15` shares/minute at `5 kH/s`
+- Quiet logging: hides `share=no` candidates and still prints shares/submits.
+  Use `VERBOSE=1 make stratum-mine-software` to see every candidate.
 
 For manual software-emulated runs, start the emulator in one terminal and leave
 it running:

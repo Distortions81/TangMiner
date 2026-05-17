@@ -25,6 +25,8 @@ make stratum-mine-software
 
 This uses the `quick3` software FPGA gate and suggests difficulty
 `0.0000046566`, which targets about `15` shares/minute at `5 kH/s`.
+It hides `share=no` candidate spam by default; use
+`VERBOSE=1 make stratum-mine-software` to print every candidate.
 
 Run a normal mining session against a TangMiner UART device:
 

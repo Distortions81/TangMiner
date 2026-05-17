@@ -38,7 +38,7 @@ environment overrides:
   STRATUM_HOST, STRATUM_PORT, STRATUM_USER, STRATUM_PASS
   SOFTWARE_FPGA_TARGET, SOFTWARE_SUGGEST_DIFFICULTY, SOFTWARE_MAX_NONCES
   HARDWARE_FPGA_TARGET, HARDWARE_SUGGEST_DIFFICULTY, SERIAL_PORT
-  NO_SUBMIT=1
+  NO_SUBMIT=1, VERBOSE=1
 EOF
 }
 
@@ -56,6 +56,9 @@ run_client() {
     --fpga-target "$target"
     --suggest-difficulty "$difficulty"
   )
+  if [ "${VERBOSE:-0}" != "1" ]; then
+    args+=(--quiet)
+  fi
   if [ "${NO_SUBMIT:-0}" = "1" ]; then
     args+=(--no-submit)
   fi

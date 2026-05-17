@@ -159,13 +159,15 @@ static void* miner_thread_main(void* arg) {
         pthread_mutex_lock(&state->lock);
         const bool stale = generation != state->generation;
         if (!stale) {
-            printf("candidate job=%s nonce=%s extranonce2=%s share=%s block=%s hash=%s\n",
-                   work.job_id,
-                   nonce_hex,
-                   work.extranonce2_hex,
-                   meets_share ? "yes" : "no",
-                   meets_block ? "yes" : "no",
-                   hash_hex);
+            if (!state->quiet || meets_share || meets_block) {
+                printf("candidate job=%s nonce=%s extranonce2=%s share=%s block=%s hash=%s\n",
+                       work.job_id,
+                       nonce_hex,
+                       work.extranonce2_hex,
+                       meets_share ? "yes" : "no",
+                       meets_block ? "yes" : "no",
+                       hash_hex);
+            }
             if (meets_share && state->submit) {
                 queue_share(state, &work, submit_nonce_hex);
             }
