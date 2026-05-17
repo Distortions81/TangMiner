@@ -92,7 +92,8 @@ scripts/launch_ubuntu_24_04.sh --sim icarus sim-cocotb
 The cocotb tests drive real UART bits into `uart_rx_pin`, read real UART bits from `uart_tx_pin`, and verify:
 
 - `TNE` echoes the parsed job payload.
-- `TNJ` returns the expected nonce-zero genesis hash with an all-ones target.
+- `TNJ` returns the expected nonce-zero genesis candidate with an all-ones target.
+- `TNJ` with `quick3` returns the expected nonce-three genesis candidate.
 - `TNH` runs the built-in nonce-zero genesis job.
 
 For speed, the hand-written Verilog top has simulation-only macros that reduce UART bit time and reset delay. These macros are only passed by the cocotb Makefile and do not affect normal synthesis.
@@ -106,5 +107,8 @@ make sim-cocotb-spinal TARGET=tangnano9k SIM=verilator
 scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
 ```
 
-This uses `GenerateSimVerilog`, which keeps the production top-level ports but shortens the UART divider and reset counter for simulation. The normal `make build TARGET=tangnano9k` path still uses the production timing.
+This uses `GenerateSimVerilog`, which keeps the production top-level ports but
+shortens the UART divider and reset counter for simulation. The normal
+`make build` path still uses production timing and the current four-lane default,
+which is focused on Tang Nano 20K.
 The SpinalHDL cocotb run also prints a `source=rtl_cycles` hashrate line derived from RTL nonce-counter cycles, so that estimate is independent of simulator wall-clock speed.

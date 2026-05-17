@@ -4,6 +4,11 @@ import hashlib
 import sys
 
 
+ALL_ONES_TARGET = b"\xff" * 32
+QUICK3_TARGET = bytes.fromhex("1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+QUICK21_TARGET = bytes.fromhex("000007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+QUICK23_TARGET = bytes.fromhex("000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+
 IV = (
     0x6A09E667,
     0xBB67AE85,
@@ -63,15 +68,32 @@ def words_to_bytes(words):
     return b"".join(word.to_bytes(4, "big") for word in words)
 
 
+def parse_target(value):
+    name = value.lower().replace("_", "-")
+    if name in ("all-ones", "allones", "easy"):
+        return ALL_ONES_TARGET
+    if name in ("quick3", "quick-3", "test3", "test-3"):
+        return QUICK3_TARGET
+    if name in ("quick21", "quick-21"):
+        return QUICK21_TARGET
+    if name in ("quick23", "quick-23", "10s", "ten-second", "ten-seconds", "10s4", "ten-second-4-lane", "ten-seconds-4-lane"):
+        return QUICK23_TARGET
+    return bytes.fromhex(value)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--header", required=True, help="80-byte Bitcoin header as hex, wire order")
-    parser.add_argument("--target", required=True, help="32-byte big-endian target hex")
+    parser.add_argument(
+        "--target",
+        required=True,
+        help="32-byte big-endian target hex, or alias quick23/quick21/quick3/all-ones",
+    )
     parser.add_argument("--verify", action="store_true", help="print the double-SHA256 hash for the header")
     args = parser.parse_args()
 
     header = bytes.fromhex(args.header)
-    target = bytes.fromhex(args.target)
+    target = parse_target(args.target)
 
     if len(header) != 80:
         raise SystemExit("header must be exactly 80 bytes")

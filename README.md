@@ -12,11 +12,11 @@ This is a learning and integration project, not an economically useful miner. Th
 
 Current working state:
 
-- Tang Nano 20K is the default target and has been built, flashed to SPI flash, loaded to SRAM, and smoke-tested over USB-UART.
-- Tang Nano 9K remains supported through the same SpinalHDL top level and board-specific constraints.
+- Tang Nano 20K is the default target. The active SpinalHDL design uses four compact SHA-256 lanes and is focused on the 20K area/timing budget.
+- Tang Nano 9K board files remain in the tree for comparison and simulation, but the four-lane bitstream is not aimed at fitting the 9K.
 - The host protocol is documented below and implemented directly in the FPGA UART parser.
-- Mujina integration is working through its (experimental, messy, unreleased) Tang Nano FPGA backend [mujina-tangminer](https://github.com/skot/mujina/tree/tangminer).
-- The SpinalHDL bitstream includes the fixed target byte-order comparison used for host-side share validation.
+- Mujina integration work lives in its experimental Tang Nano FPGA backend [mujina-tangminer](https://github.com/skot/mujina/tree/tangminer). The current hardware contract reports nonce-only candidates and leaves full share validation on the host.
+- The SpinalHDL bitstream uses a small byte-order-aware candidate filter instead of a full 256-bit FPGA target comparator.
 - Legacy hand-written Verilog remains in the tree for comparison and Icarus-based simulation.
 
 Still worth improving:
@@ -97,7 +97,8 @@ make build
 
 This generates `build/spinal/top.v` from `src/main/scala/tangminer/TangMiner.scala`, synthesizes it, runs place and route, and writes a target-specific bitstream such as `build/tangminer_spinal_tangnano20k.fs`.
 
-Build for the Tang Nano 9K:
+Build with the Tang Nano 9K constraints. The current four-lane SpinalHDL design
+is not area-validated for 9K:
 
 ```sh
 make build TARGET=tangnano9k
@@ -174,15 +175,21 @@ scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
 The SpinalHDL cocotb suite includes a cycle-count hashrate check. It reports
 `source=rtl_cycles` by watching the RTL nonce counter and computing the
 hardware-rate estimate from simulated clock cycles, not simulator wall-clock
-time. At the default Tang Nano `27 MHz` clock, the active compact SHA-256 core
-currently measures:
+time. At the default Tang Nano `27 MHz` clock, the active four-lane compact
+SHA-256 design currently measures:
 
 ```text
-27 MHz / 132 clocks per nonce = 204.5 kH/s
+27 MHz / 32 clocks per aggregate nonce = 843.75 kH/s
 ```
 
 Set `HARDWARE_CLOCK_HZ` when running cocotb to report the same measured cycle
 count at a different planned hardware clock.
+
+See [docs/hardware-overview.md](docs/hardware-overview.md) for a block diagram
+of the generated hardware datapath and nonce loop.
+
+See [docs/compression-circuitry.md](docs/compression-circuitry.md) for diagrams
+of the compact SHA-256 compressor and the two-pass nonce pipeline.
 
 See [docs/software-emulation.md](docs/software-emulation.md) for the emulator, pseudo-terminal, and simulator options.
 
@@ -235,7 +242,14 @@ python scripts/serial_smoke.py --echo --timeout 2 /dev/cu.usbserial-*
 python scripts/serial_smoke.py --timeout 3 /dev/cu.usbserial-*
 ```
 
-The echo test should report `ECHO OK`. The hash test uses an easy all-ones target and should return an `F` response with a nonce and hash.
+The echo test should report `ECHO OK`. The hash test uses an easy all-ones target and should return an `F` response with a nonce. The script recomputes the double-SHA-256 hash on the host side for validation.
+
+For a roughly 10-second candidate interval at the default `27 MHz` clock, use the
+named `quick23` target:
+
+```sh
+python scripts/serial_smoke.py --target quick23 --timeout 20 /dev/cu.usbserial-*
+```
 
 ## Host Serial Protocol
 
@@ -260,9 +274,11 @@ Fields:
 
 - `midstate`: SHA-256 internal state after bytes `0..63` of the 80-byte Bitcoin block header.
 - `tail`: header bytes `64..75`, excluding the nonce. These 12 bytes become the final three SHA-256 message words before the nonce word.
-- `target`: 32-byte big-endian proof-of-work target integer.
+- `target`: 32-byte big-endian proof-of-work target integer. In the current four-lane 20K design, this field selects a cheap FPGA-side candidate filter instead of a full 256-bit exact comparator. The host remains responsible for the authoritative target check.
 
-When a job is accepted, the FPGA starts scanning at nonce word `0x00000000` and increments internally. A new `TNJ` command replaces the current work and restarts scanning from zero.
+When a job is accepted, the FPGA starts four lanes at nonce words `0x00000000`
+through `0x00000003`; each lane increments by `4`. A new `TNJ` command
+replaces the current work and restarts those lane residues from zero.
 
 The FPGA constructs the first-pass final block as:
 
@@ -270,7 +286,12 @@ The FPGA constructs the first-pass final block as:
 tail[12] || nonce_word[4] || 0x80 || zero padding || 0x00000280
 ```
 
-It then performs the second SHA-256 pass over the 32-byte first digest. For target comparison, the FPGA byte-reverses the final SHA digest and compares it as a big-endian integer against `target`, matching Bitcoin proof-of-work semantics.
+It then performs the second SHA-256 pass over the 32-byte first digest. The FPGA byte-reverses the final SHA digest for Bitcoin proof-of-work bit ordering, checks only the selected candidate prefix, and reports candidate nonces to the host. Recognized target aliases are:
+
+- `all-ones` / `easy`: always report the first checked nonce for smoke tests.
+- `quick3`: require the top 3 bits of `reverse_bytes(hash)` to be zero; this is used by the short RTL test.
+- `quick21`: require the top 21 bits of `reverse_bytes(hash)` to be zero.
+- `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero; this is the default for arbitrary targets and averages roughly 10 seconds per candidate with four lanes at 27 MHz.
 
 ### Found Response
 
@@ -279,14 +300,13 @@ FPGA to host:
 ```text
 "F"
 nonce[4]
-hash[32]
 ```
 
-Total length: `37` bytes.
+Total length: `5` bytes.
 
-`nonce` is returned as the four bytes that were inserted into the hashed Bitcoin header. Host software should copy those bytes into header bytes `76..79` or parse them as a Bitcoin little-endian nonce field. `hash` is returned in normal SHA-256 digest byte order.
+`nonce` is returned as the four bytes that were inserted into the hashed Bitcoin header. Host software should copy those bytes into header bytes `76..79` or parse them as a Bitcoin little-endian nonce field.
 
-The host should still validate every returned nonce before submitting a share. Mujina does this by rebuilding the block header, double-hashing it on the host, and checking the resulting block hash against the share target.
+The host must validate every returned nonce before submitting a share. Mujina does this by rebuilding the block header, double-hashing it on the host, and checking the resulting block hash against the actual share target.
 
 ### Echo Job
 
@@ -337,7 +357,7 @@ This starts a built-in genesis-style easy-target test job. It exists for bring-u
 ```sh
 python3 scripts/make_job.py \
   --header <80-byte-header-hex> \
-  --target <32-byte-big-endian-target-hex> \
+  --target <32-byte-big-endian-target-hex|quick23|quick21|quick3|all-ones> \
   > job.bin
 ```
 

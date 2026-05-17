@@ -10,7 +10,7 @@ The backend needs four pieces:
 
 - serial port discovery/configuration for the Tang Nano USB-UART
 - job conversion from Mujina work into `midstate`, `tail`, and `target`
-- response parsing for `F || nonce || hash`
+- response parsing for `F || nonce`
 - share validation/submission through the existing Mujina pipeline
 
 ## Endian Contract
@@ -18,15 +18,17 @@ The backend needs four pieces:
 Keep the FPGA simple:
 
 - FPGA consumes SHA-256 big-endian words.
-- FPGA returns the SHA digest in normal SHA byte order.
-- FPGA compares `reverse_bytes(hash) <= target`, because Bitcoin proof-of-work
-  interprets the 32 digest bytes as a little-endian integer.
-- Mujina owns Bitcoin wire-format conversion, compact target expansion, and pool share formatting.
+- FPGA returns only the four nonce bytes inserted into the hashed header.
+- FPGA uses a cheap `reverse_bytes(hash)` prefix filter to report candidates,
+  not a full target comparator.
+- Mujina owns Bitcoin wire-format conversion, compact target expansion,
+  host-side double hashing, exact target comparison, and pool share formatting.
 
-The current bitstream always starts at nonce zero and scans `current_nonce` as a big-endian SHA word.
-Mujina therefore treats the returned nonce bytes as header wire order and
-converts them into Rust's `BlockHeader::nonce` little-endian `u32` before
-host-side validation and share submission.
+The current bitstream starts four lanes at nonce words `0`, `1`, `2`, and `3`;
+each lane then advances by `4`. Mujina therefore treats the returned nonce bytes
+as header wire order, converts them into Rust's `BlockHeader::nonce`
+little-endian `u32`, and recomputes the block hash before host-side validation
+and share submission.
 
 ## First Driver Milestone
 

@@ -33,6 +33,8 @@ object Sha256 {
   def word(value: BigInt): UInt = U(value, 32 bits)
   def wordFromBits(value: Bits, index: Int): UInt =
     value(511 - index * 32 downto 480 - index * 32).asUInt
+  def wordFromDigest(value: Bits, index: Int): UInt =
+    value(255 - index * 32 downto 224 - index * 32).asUInt
 
   def rotr(x: UInt, n: Int): UInt = (x.rotateRight(n)).resize(32)
   def shr(x: UInt, n: Int): UInt = (B(0, n bits) ## x.asBits(31 downto n)).asUInt
@@ -221,49 +223,43 @@ class Sha256Compress extends Component {
     val start = in Bool()
     val stateIn = in Bits(256 bits)
     val block = in Bits(512 bits)
-    val busy = out Bool()
     val done = out Bool()
-    val stateOut = out Bits(256 bits)
+    val workOut = out Bits(256 bits)
   }
 
   val a, b, c, d, e, f, g, h = Reg(UInt(32 bits)) init 0
-  val h0, h1, h2, h3, h4, h5, h6, h7 = Reg(UInt(32 bits)) init 0
   val w = Vec(Reg(UInt(32 bits)) init 0, 16)
-  val round = Reg(UInt(7 bits)) init 0
+  val round = Reg(UInt(6 bits)) init 0
   val busyReg = Reg(Bool()) init False
-  val doneReg = Reg(Bool()) init False
-  val stateOutReg = Reg(Bits(256 bits)) init 0
 
   val kVec = Vec(Sha256.K.map(Sha256.word))
   val wNext = (Sha256.smallSigma1(w(14)) + w(9) + Sha256.smallSigma0(w(1)) + w(0)).resize(32)
-  val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + kVec(round(5 downto 0)) + w(0)).resize(32)
+  val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + kVec(round) + w(0)).resize(32)
   val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
+  val aNext = (t1 + t2).resize(32)
+  val eNext = (d + t1).resize(32)
+  val finalRound = busyReg && round === 63
+  val finalWork = Sha256.concatWords(Seq(
+    aNext,
+    a,
+    b,
+    c,
+    eNext,
+    e,
+    f,
+    g
+  ))
 
-  io.busy := busyReg
-  io.done := doneReg
-  io.stateOut := stateOutReg
+  io.done := finalRound
+  io.workOut := finalWork
 
   when(io.reset) {
     a := 0; b := 0; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0
-    h0 := 0; h1 := 0; h2 := 0; h3 := 0; h4 := 0; h5 := 0; h6 := 0; h7 := 0
     for (i <- 0 until 16) w(i) := 0
     round := 0
     busyReg := False
-    doneReg := False
-    stateOutReg := 0
   } otherwise {
-    doneReg := False
-
-    when(io.start && !busyReg) {
-      h0 := io.stateIn(255 downto 224).asUInt
-      h1 := io.stateIn(223 downto 192).asUInt
-      h2 := io.stateIn(191 downto 160).asUInt
-      h3 := io.stateIn(159 downto 128).asUInt
-      h4 := io.stateIn(127 downto 96).asUInt
-      h5 := io.stateIn(95 downto 64).asUInt
-      h6 := io.stateIn(63 downto 32).asUInt
-      h7 := io.stateIn(31 downto 0).asUInt
-
+    when(io.start && (!busyReg || finalRound)) {
       a := io.stateIn(255 downto 224).asUInt
       b := io.stateIn(223 downto 192).asUInt
       c := io.stateIn(191 downto 160).asUInt
@@ -288,25 +284,14 @@ class Sha256Compress extends Component {
       h := g
       g := f
       f := e
-      e := (d + t1).resize(32)
+      e := eNext
       d := c
       c := b
       b := a
-      a := (t1 + t2).resize(32)
+      a := aNext
 
       when(round === 63) {
-        stateOutReg := Sha256.concatWords(Seq(
-          (h0 + t1 + t2).resize(32),
-          (h1 + a).resize(32),
-          (h2 + b).resize(32),
-          (h3 + c).resize(32),
-          (h4 + d + t1).resize(32),
-          (h5 + e).resize(32),
-          (h6 + f).resize(32),
-          (h7 + g).resize(32)
-        ))
         busyReg := False
-        doneReg := True
       } otherwise {
         round := round + 1
       }
@@ -321,30 +306,27 @@ class BitcoinHashCore extends Component {
     val stop = in Bool()
     val midstate = in Bits(256 bits)
     val tail = in Bits(96 bits)
-    val target = in Bits(256 bits)
+    val candidateMode = in UInt(2 bits)
+    val startNonce = in UInt(32 bits)
+    val nonceStride = in UInt(32 bits)
     val running = out Bool()
     val found = out Bool()
     val foundNonce = out UInt(32 bits)
-    val foundHash = out Bits(256 bits)
     val currentNonce = out UInt(32 bits)
   }
 
   object State extends SpinalEnum {
-    val idle, firstStart, firstWait, secondStart, secondWait, report = newElement()
+    val idle, firstStart, firstWait, secondWait, report = newElement()
   }
 
   val state = Reg(State()) init State.idle
   val shaStart = Bool()
   val shaStateIn = Bits(256 bits)
   val shaBlock = Bits(512 bits)
-  val firstDigest = Reg(Bits(256 bits)) init 0
   val jobMidstateReg = Reg(Bits(256 bits)) init 0
   val jobTailReg = Reg(Bits(96 bits)) init 0
-  val jobTargetReg = Reg(Bits(256 bits)) init 0
-  val runningReg = Reg(Bool()) init False
-  val foundReg = Reg(Bool()) init False
+  val jobCandidateModeReg = Reg(UInt(2 bits)) init 3
   val foundNonceReg = Reg(UInt(32 bits)) init 0
-  val foundHashReg = Reg(Bits(256 bits)) init 0
   val currentNonceReg = Reg(UInt(32 bits)) init 0
 
   shaStart := False
@@ -360,92 +342,93 @@ class BitcoinHashCore extends Component {
   sha.io.block := shaBlock
 
   val shaIv = B(Sha256.Iv.map(v => B(v, 32 bits)).reduce(_ ## _))
+  def addFeedForward(base: Bits, work: Bits): Bits =
+    Sha256.concatWords((0 until 8).map(i =>
+      (Sha256.wordFromDigest(base, i) + Sha256.wordFromDigest(work, i)).resize(32)
+    ))
 
-  val firstBlock =
-    jobTailReg(95 downto 64) ## jobTailReg(63 downto 32) ## jobTailReg(31 downto 0) ## currentNonceReg.asBits ##
+  val firstDigest = addFeedForward(jobMidstateReg, sha.io.workOut)
+  val finalDigest = addFeedForward(shaIv, sha.io.workOut)
+  val reversedDigest = Sha256.reverseBytes256(finalDigest)
+  val candidateAlwaysSelected = jobCandidateModeReg === U(0, 2 bits)
+  val quick3TargetSelected = jobCandidateModeReg === U(1, 2 bits)
+  val quick21TargetSelected = jobCandidateModeReg === U(2, 2 bits)
+  val quick23TargetSelected = jobCandidateModeReg === U(3, 2 bits)
+  val quick3MeetsTarget = reversedDigest(255 downto 253) === B(0, 3 bits)
+  val quick21MeetsTarget = reversedDigest(255 downto 235) === B(0, 21 bits)
+  val quick23MeetsTarget = reversedDigest(255 downto 233) === B(0, 23 bits)
+  val digestMeetsTarget =
+    candidateAlwaysSelected ||
+      (quick3TargetSelected && quick3MeetsTarget) ||
+      (quick21TargetSelected && quick21MeetsTarget) ||
+      (quick23TargetSelected && quick23MeetsTarget)
+
+  def firstBlockForNonce(nonce: UInt): Bits =
+    jobTailReg(95 downto 64) ## jobTailReg(63 downto 32) ## jobTailReg(31 downto 0) ## nonce.asBits ##
       B"32'h80000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
       B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
       B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000280"
-  val secondBlock =
-    firstDigest ##
+  val firstBlock = firstBlockForNonce(currentNonceReg)
+  def secondBlockForDigest(digest: Bits): Bits =
+    digest ##
       B"32'h80000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
       B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000100"
 
-  io.running := runningReg
-  io.found := foundReg
+  io.running := state =/= State.idle && state =/= State.report
+  io.found := state === State.report
   io.foundNonce := foundNonceReg
-  io.foundHash := foundHashReg
   io.currentNonce := currentNonceReg
 
   when(io.reset) {
     state := State.idle
-    firstDigest := 0
     jobMidstateReg := 0
     jobTailReg := 0
-    jobTargetReg := 0
-    runningReg := False
-    foundReg := False
+    jobCandidateModeReg := 3
     foundNonceReg := 0
-    foundHashReg := 0
     currentNonceReg := 0
   } otherwise {
     when(io.stop) {
       state := State.idle
-      runningReg := False
-      foundReg := False
     } elsewhen(io.start) {
       state := State.firstStart
-      firstDigest := 0
       jobMidstateReg := io.midstate
       jobTailReg := io.tail
-      jobTargetReg := io.target
-      currentNonceReg := 0
-      runningReg := True
-      foundReg := False
+      jobCandidateModeReg := io.candidateMode
+      currentNonceReg := io.startNonce
     } otherwise {
       switch(state) {
         is(State.idle) {
-          foundReg := False
-          runningReg := False
         }
         is(State.firstStart) {
-          when(!sha.io.busy) {
-            shaStateIn := jobMidstateReg
-            shaBlock := firstBlock
-            shaStart := True
-            state := State.firstWait
-          }
+          shaStateIn := jobMidstateReg
+          shaBlock := firstBlock
+          shaStart := True
+          state := State.firstWait
         }
         is(State.firstWait) {
           when(sha.io.done) {
-            firstDigest := sha.io.stateOut
-            state := State.secondStart
-          }
-        }
-        is(State.secondStart) {
-          when(!sha.io.busy) {
             shaStateIn := shaIv
-            shaBlock := secondBlock
+            shaBlock := secondBlockForDigest(firstDigest)
             shaStart := True
             state := State.secondWait
           }
         }
         is(State.secondWait) {
           when(sha.io.done) {
-            when(Sha256.reverseBytes256(sha.io.stateOut).asUInt <= jobTargetReg.asUInt) {
-              foundReg := True
+            val nextNonce = currentNonceReg + io.nonceStride
+            when(digestMeetsTarget) {
               foundNonceReg := currentNonceReg
-              foundHashReg := sha.io.stateOut
-              runningReg := False
               state := State.report
             } otherwise {
-              currentNonceReg := currentNonceReg + 1
-              state := State.firstStart
+              shaStateIn := jobMidstateReg
+              shaBlock := firstBlockForNonce(nextNonce)
+              shaStart := True
+              currentNonceReg := nextNonce
+              state := State.firstWait
             }
           }
         }
         is(State.report) {
-          runningReg := False
         }
       }
     }
@@ -469,8 +452,16 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
   val coreArea = new ClockingArea(ClockDomain(io.clk, config = ClockDomainConfig(resetKind = BOOT))) {
     val ClksPerBit = clksPerBit
     val JobBytes = 76
-    val FoundRespBytes = 37
+    val FoundRespBytes = 5
     val EchoRespBytes = 77
+    val LaneCount = 4
+    val CandidateAlways = U(0, 2 bits)
+    val CandidateQuick3 = U(1, 2 bits)
+    val CandidateQuick21 = U(2, 2 bits)
+    val CandidateQuick23 = U(3, 2 bits)
+    val Quick3Target = B"256'h1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    val Quick21Target = B"256'h000007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    val Quick23Target = B"256'h000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
     val resetCounter = Reg(UInt(resetCounterBits bits)) init 0
     val reset = !resetCounter.msb
@@ -485,8 +476,8 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
     val tx = new UartTx(ClksPerBit)
     tx.io.reset := reset
 
-    val core = new BitcoinHashCore
-    core.io.reset := reset
+    val cores = (0 until LaneCount).map(_ => new BitcoinHashCore)
+    cores.foreach(_.io.reset := reset)
 
     object RxState extends SpinalEnum {
       val sync0, sync1, cmd, payload = newElement()
@@ -502,16 +493,38 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
     val midstate = Reg(Bits(256 bits)) init 0
     val tail = Reg(Bits(96 bits)) init 0
     val target = Reg(Bits(256 bits)) init 0
+    val targetIsAllOnes = Reg(Bool()) init True
+    val targetIsQuick3 = Reg(Bool()) init False
+    val targetIsQuick21 = Reg(Bool()) init False
+    val targetIsQuick23 = Reg(Bool()) init False
+    val candidateMode = Reg(UInt(2 bits)) init CandidateQuick23
     val coreStart = Reg(Bool()) init False
     val coreStop = Reg(Bool()) init False
     val coreStartPending = Reg(Bool()) init False
     val echoToggle = Reg(Bool()) init False
 
-    core.io.start := coreStart
-    core.io.stop := coreStop
-    core.io.midstate := midstate
-    core.io.tail := tail
-    core.io.target := target
+    for ((core, lane) <- cores.zipWithIndex) {
+      core.io.start := coreStart
+      core.io.stop := coreStop
+      core.io.midstate := midstate
+      core.io.tail := tail
+      core.io.candidateMode := candidateMode
+      core.io.startNonce := U(lane, 32 bits)
+      core.io.nonceStride := U(LaneCount, 32 bits)
+    }
+
+    val runningAny = cores.map(_.io.running).reduce(_ || _)
+    val foundAny = cores.map(_.io.found).reduce(_ || _)
+    val currentNonce = UInt(32 bits)
+    currentNonce := cores(0).io.currentNonce
+
+    val selectedFoundNonce = UInt(32 bits)
+    selectedFoundNonce := cores(LaneCount - 1).io.foundNonce
+    for (lane <- (0 until LaneCount - 1).reverse) {
+      when(cores(lane).io.found) {
+        selectedFoundNonce := cores(lane).io.foundNonce
+      }
+    }
 
     when(reset) {
       rxState := RxState.sync0
@@ -523,6 +536,11 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
       midstate := 0
       tail := 0
       target := 0
+      targetIsAllOnes := True
+      targetIsQuick3 := False
+      targetIsQuick21 := False
+      targetIsQuick23 := False
+      candidateMode := CandidateQuick23
       echoToggle := False
     } otherwise {
       coreStart := False
@@ -551,25 +569,52 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
               midstate := B"256'hbc909a336358bff090ccac7d1e59caa8c3c8d8e94f0103c896b187364719f91b"
               tail := B"96'h4b1e5e4a29ab5f49ffff001d"
               target := B"256'hffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+              candidateMode := CandidateAlways
               coreStartPending := True
               rxState := RxState.sync0
             } elsewhen(rx.io.data === B"8'h4a" || rx.io.data === B"8'h45") {
+              targetIsAllOnes := True
+              targetIsQuick3 := True
+              targetIsQuick21 := True
+              targetIsQuick23 := True
               rxState := RxState.payload
             } otherwise {
               rxState := RxState.sync0
             }
           }
           is(RxState.payload) {
+            val targetByteIndex = (payloadCount - U(44, 7 bits)).resize(5)
+            val targetMatchesAllOnes = rx.io.data === B"8'hff"
+            val targetMatchesQuick3 = rx.io.data === Sha256.byteFromMsb(Quick3Target, 32, targetByteIndex)
+            val targetMatchesQuick21 = rx.io.data === Sha256.byteFromMsb(Quick21Target, 32, targetByteIndex)
+            val targetMatchesQuick23 = rx.io.data === Sha256.byteFromMsb(Quick23Target, 32, targetByteIndex)
+            val nextTargetIsAllOnes = targetIsAllOnes && targetMatchesAllOnes
+            val nextTargetIsQuick3 = targetIsQuick3 && targetMatchesQuick3
+            val nextTargetIsQuick21 = targetIsQuick21 && targetMatchesQuick21
+            val nextTargetIsQuick23 = targetIsQuick23 && targetMatchesQuick23
+
             when(payloadCount < 32) {
               midstate := midstate(247 downto 0) ## rx.io.data
             } elsewhen(payloadCount < 44) {
               tail := tail(87 downto 0) ## rx.io.data
             } elsewhen(payloadCount < 76) {
               target := target(247 downto 0) ## rx.io.data
+              targetIsAllOnes := nextTargetIsAllOnes
+              targetIsQuick3 := nextTargetIsQuick3
+              targetIsQuick21 := nextTargetIsQuick21
+              targetIsQuick23 := nextTargetIsQuick23
             }
 
             when(payloadCount === JobBytes - 1) {
               when(command === B"8'h4a") {
+                candidateMode := CandidateQuick23
+                when(nextTargetIsAllOnes) {
+                  candidateMode := CandidateAlways
+                } elsewhen(nextTargetIsQuick3) {
+                  candidateMode := CandidateQuick3
+                } elsewhen(nextTargetIsQuick21) {
+                  candidateMode := CandidateQuick21
+                }
                 coreStartPending := True
               } elsewhen(command === B"8'h45") {
                 echoToggle := !echoToggle
@@ -583,10 +628,9 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
       }
     }
 
-    def foundResponseByte(index: UInt): Bits = {
-      val nonceBytes = (0 until 4).map(i => core.io.foundNonce.asBits(31 - i * 8 downto 24 - i * 8))
-      val hashBytes = (0 until 32).map(i => core.io.foundHash(255 - i * 8 downto 248 - i * 8))
-      val bytes = Vec(Seq(B"8'h46") ++ nonceBytes ++ hashBytes)
+    def foundResponseByte(index: UInt, nonce: UInt): Bits = {
+      val nonceBytes = (0 until 4).map(i => nonce.asBits(31 - i * 8 downto 24 - i * 8))
+      val bytes = Vec(Seq(B"8'h46") ++ nonceBytes)
       bytes(index.resized)
     }
 
@@ -605,6 +649,7 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
     val foundSeen = Reg(Bool()) init False
     val echoSeenToggle = Reg(Bool()) init False
     val txEcho = Reg(Bool()) init False
+    val txFoundNonce = Reg(UInt(32 bits)) init 0
 
     tx.io.start := txStart
     tx.io.data := txData
@@ -618,10 +663,11 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
       foundSeen := False
       echoSeenToggle := False
       txEcho := False
+      txFoundNonce := 0
     } otherwise {
       txStart := False
 
-      when(!core.io.found) {
+      when(!foundAny) {
         foundSeen := False
       }
 
@@ -632,16 +678,17 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
             txEcho := True
             txState := TxState.send
             echoSeenToggle := echoToggle
-          } elsewhen(core.io.found && !foundSeen) {
+          } elsewhen(foundAny && !foundSeen) {
             txIndex := 0
             txEcho := False
+            txFoundNonce := selectedFoundNonce
             txState := TxState.send
             foundSeen := True
           }
         }
         is(TxState.send) {
           when(!tx.io.busy) {
-            txData := Mux(txEcho, echoResponseByte(txIndex), foundResponseByte(txIndex))
+            txData := Mux(txEcho, echoResponseByte(txIndex), foundResponseByte(txIndex, txFoundNonce))
             txStart := True
             txState := TxState.waitBusy
           }
@@ -659,12 +706,12 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
       }
     }
 
-    io.led(0) := !core.io.running
-    io.led(1) := !core.io.found
-    io.led(2) := !core.io.currentNonce(20)
-    io.led(3) := !core.io.currentNonce(21)
-    io.led(4) := !core.io.currentNonce(22)
-    io.led(5) := !core.io.currentNonce(23)
+    io.led(0) := !runningAny
+    io.led(1) := !foundAny
+    io.led(2) := !currentNonce(20)
+    io.led(3) := !currentNonce(21)
+    io.led(4) := !currentNonce(22)
+    io.led(5) := !currentNonce(23)
   }
 }
 

@@ -8,6 +8,7 @@ from tangminer_emulator import (
     ALL_ONES_TARGET,
     GENESIS_EXPECTED_HASH_NONCE_ZERO,
     GENESIS_HEADER,
+    QUICK3_TARGET,
     bitcoin_hash,
     build_job_from_header,
     encode_job_payload,
@@ -17,6 +18,7 @@ from tangminer_emulator import (
 
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
 HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "27000000"))
+LANE_COUNT = 4
 
 
 def _clock(signal, period, unit):
@@ -134,10 +136,10 @@ async def top_hashes_genesis_nonce_zero(dut):
 
     await _uart_write(dut, b"TNJ" + payload)
 
-    response = await _uart_read(dut, 37)
+    response = await _uart_read(dut, 5)
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x00\x00"
-    assert response[5:] == GENESIS_EXPECTED_HASH_NONCE_ZERO
+    assert bitcoin_hash(job, 0) == GENESIS_EXPECTED_HASH_NONCE_ZERO
 
 
 @cocotb.test()
@@ -146,23 +148,28 @@ async def top_hashes_genesis_nonce_three(dut):
 
     all_ones_job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
     expected_hash = bitcoin_hash(all_ones_job, 3)
-    target = expected_hash[::-1]
-    job = build_job_from_header(GENESIS_HEADER, target)
+    job = build_job_from_header(GENESIS_HEADER, QUICK3_TARGET)
     payload = encode_job_payload(job)
 
     await _uart_write(dut, b"TNJ" + payload)
 
-    response = await _uart_read(dut, 37)
+    response = await _uart_read(dut, 5)
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x00\x03"
-    assert response[5:] == expected_hash
+    assert expected_hash[::-1][0] & 0xE0 == 0
 
 
 @cocotb.test()
 async def top_reports_cycle_accurate_hashrate(dut):
     await _start_clock(dut)
 
-    nonce_signal = _resolve_signal(dut, "current_nonce", "coreArea_core_io_currentNonce")
+    nonce_signal = _resolve_signal(
+        dut,
+        "current_nonce",
+        "coreArea_currentNonce",
+        "coreArea_cores_0_io_currentNonce",
+        "coreArea_core_io_currentNonce",
+    )
     job = build_job_from_header(GENESIS_HEADER, b"\x00" * 32)
     payload = encode_job_payload(job)
 
@@ -170,15 +177,19 @@ async def top_reports_cycle_accurate_hashrate(dut):
 
     cycle = 0
     cycle = await _wait_for_nonce_value(dut, nonce_signal, 0, cycle)
-    nonce_cycles = {}
-    for nonce in range(1, 5):
+    lane_nonce_cycles = {}
+    for nonce in range(LANE_COUNT, LANE_COUNT * 5, LANE_COUNT):
         cycle = await _wait_for_nonce(dut, nonce_signal, nonce, cycle)
-        nonce_cycles[nonce] = cycle
+        lane_nonce_cycles[nonce] = cycle
 
-    deltas = [nonce_cycles[nonce] - nonce_cycles[nonce - 1] for nonce in range(2, 5)]
-    assert min(deltas) == max(deltas), f"non-steady nonce cycle deltas: {deltas}"
+    lane_deltas = [
+        lane_nonce_cycles[nonce] - lane_nonce_cycles[nonce - LANE_COUNT]
+        for nonce in range(LANE_COUNT * 2, LANE_COUNT * 5, LANE_COUNT)
+    ]
+    assert min(lane_deltas) == max(lane_deltas), f"non-steady lane cycle deltas: {lane_deltas}"
+    assert lane_deltas[0] % LANE_COUNT == 0, f"lane delta does not divide across lanes: {lane_deltas[0]}"
 
-    cycles_per_nonce = deltas[0]
+    cycles_per_nonce = lane_deltas[0] // LANE_COUNT
     hashes_per_second = HARDWARE_CLOCK_HZ / cycles_per_nonce
     dut._log.info(
         "hashrate source=rtl_cycles "
@@ -197,7 +208,7 @@ async def top_runs_hardcoded_job(dut):
 
     await _uart_write(dut, b"TNH")
 
-    response = await _uart_read(dut, 37)
+    response = await _uart_read(dut, 5)
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x00\x00"
-    assert response[5:] == GENESIS_EXPECTED_HASH_NONCE_ZERO
+    assert bitcoin_hash(build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET), 0) == GENESIS_EXPECTED_HASH_NONCE_ZERO

@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="960" viewBox="0 0 1500 960" role="img" aria-labelledby="title desc">
+  <title id="title">TangMiner Hardware Design And Data Flow</title>
+  <desc id="desc">Block diagram of the TangMiner FPGA hardware: USB UART input, command parser, job registers, four Bitcoin hash lanes, reused SHA-256 compressors, feed-forward add, candidate filter, nonce loop, and UART found response.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#314056"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#126ca8"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2e7d5b"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 30px Arial, sans-serif; fill: #182235; }
+      .subtitle { font: 15px Arial, sans-serif; fill: #536075; }
+      .sectionLabel { font: 700 17px Arial, sans-serif; fill: #334155; }
+      .box { fill: #ffffff; stroke: #526173; stroke-width: 2; rx: 8; }
+      .host { fill: #fff7ed; stroke: #b45309; }
+      .fpga { fill: #eef6ff; stroke: #126ca8; stroke-width: 2.5; rx: 14; }
+      .control { fill: #f1f5f9; stroke: #475569; }
+      .core { fill: #ecfdf5; stroke: #2e7d5b; }
+      .sha { fill: #fefce8; stroke: #a16207; stroke-width: 2.5; }
+      .check { fill: #fdf2f8; stroke: #be185d; }
+      .note { fill: #ffffff; stroke: #94a3b8; stroke-dasharray: 6 5; rx: 8; }
+      .label { font: 700 16px Arial, sans-serif; fill: #172033; }
+      .small { font: 13px Arial, sans-serif; fill: #334155; }
+      .tiny { font: 12px Arial, sans-serif; fill: #475569; }
+      .metric { font: 11px Arial, sans-serif; fill: #0f5f8f; }
+      .mono { font: 13px "DejaVu Sans Mono", Consolas, monospace; fill: #253041; }
+      .arrow { fill: none; stroke: #314056; stroke-width: 2.4; marker-end: url(#arrow); }
+      .arrowBlue { fill: none; stroke: #126ca8; stroke-width: 2.5; marker-end: url(#arrowBlue); }
+      .arrowGreen { fill: none; stroke: #2e7d5b; stroke-width: 2.5; marker-end: url(#arrowGreen); }
+      .dash { stroke-dasharray: 7 6; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1500" height="960"/>
+  <text class="title" x="48" y="48">TangMiner Hardware Overview</text>
+  <text class="subtitle" x="48" y="74">Logical datapath after SpinalHDL generation and FPGA synthesis: four compact lanes, each reusing one iterative SHA-256 compressor for both Bitcoin hash passes.</text>
+
+  <rect class="host" x="44" y="118" width="230" height="150" rx="8"/>
+  <text class="label" x="70" y="152">Host Miner</text>
+  <text class="small" x="70" y="181">Mujina or test script</text>
+  <text class="mono" x="70" y="211">TNJ / TNE / TNS / TNH</text>
+  <text class="tiny" x="70" y="237">USB-UART at 115200 8N1</text>
+  <text class="metric" x="70" y="254">area: host software, not FPGA</text>
+
+  <rect class="fpga" x="320" y="104" width="1132" height="758"/>
+  <text class="sectionLabel" x="344" y="136">Tang Nano FPGA fabric</text>
+  <text class="tiny" x="344" y="158">Gowin LUTs, flip-flops, carry chains, IO buffers, and routing</text>
+
+  <rect class="box" x="356" y="198" width="150" height="98" rx="8"/>
+  <text class="label" x="389" y="227">UART RX</text>
+  <text class="small" x="380" y="253">bit sampler</text>
+  <text class="tiny" x="377" y="271">byte valid pulse</text>
+  <text class="metric" x="376" y="288">area: tiny</text>
+  <text class="metric" x="376" y="302">10 bit-times/byte</text>
+
+  <rect class="control" x="536" y="180" width="176" height="124" rx="8"/>
+  <text class="label" x="566" y="210">Parser FSM</text>
+  <text class="small" x="562" y="236">sync "TN"</text>
+  <text class="small" x="562" y="258">command byte</text>
+  <text class="small" x="562" y="278">76-byte payload</text>
+  <text class="metric" x="562" y="296">area: small; UART-bound</text>
+
+  <rect class="box" x="752" y="174" width="224" height="142" rx="8"/>
+  <text class="label" x="800" y="205">Job Registers</text>
+  <text class="mono" x="784" y="235">midstate[255:0]</text>
+  <text class="mono" x="784" y="260">tail[95:0]</text>
+  <text class="mono" x="784" y="282">candidate mode</text>
+  <text class="metric" x="784" y="302">area: medium regs; cycles: held</text>
+
+  <rect class="control" x="356" y="384" width="210" height="140" rx="8"/>
+  <text class="label" x="381" y="414">4x BitcoinHashCore</text>
+  <text class="small" x="388" y="442">one state machine per lane</text>
+  <text class="mono" x="386" y="468">starts 0,1,2,3</text>
+  <text class="mono" x="386" y="491">stride = 4</text>
+  <text class="metric" x="386" y="512">area: medium control/regs</text>
+
+  <rect class="box" x="618" y="372" width="226" height="98" rx="8"/>
+  <text class="label" x="660" y="402">First Block</text>
+  <text class="small" x="648" y="429">tail || nonce || pad</text>
+  <text class="mono" x="654" y="449">length = 0x280</text>
+  <text class="metric" x="640" y="466">area: small wiring; cycles: feeds pass 1</text>
+
+  <rect class="box" x="618" y="526" width="226" height="98" rx="8"/>
+  <text class="label" x="649" y="556">Second Block</text>
+  <text class="small" x="646" y="583">first_digest || pad</text>
+  <text class="mono" x="654" y="603">length = 0x100</text>
+  <text class="metric" x="640" y="620">area: small wiring; cycles: feeds pass 2</text>
+
+  <rect class="control" x="896" y="425" width="114" height="130" rx="8"/>
+  <text class="label" x="919" y="456">Mux</text>
+  <text class="small" x="918" y="485">stateIn</text>
+  <text class="small" x="924" y="508">block</text>
+  <text class="tiny" x="912" y="529">pass select</text>
+  <text class="metric" x="908" y="548">area: small</text>
+
+  <rect class="sha" x="1074" y="270" width="314" height="260" rx="10"/>
+  <text class="label" x="1112" y="303">4x Sha256Compress</text>
+  <text class="small" x="1113" y="330">one 64-round iterative engine per lane</text>
+  <rect class="box" x="1102" y="354" width="122" height="58" rx="6"/>
+  <text class="small" x="1122" y="379">a..h regs</text>
+  <text class="tiny" x="1116" y="399">working state</text>
+  <rect class="box" x="1240" y="354" width="118" height="58" rx="6"/>
+  <text class="small" x="1258" y="379">W[0..15]</text>
+  <text class="tiny" x="1258" y="399">rolling words</text>
+  <rect class="box" x="1102" y="430" width="122" height="58" rx="6"/>
+  <text class="small" x="1123" y="455">K ROM</text>
+  <text class="tiny" x="1115" y="475">round const</text>
+  <rect class="box" x="1240" y="430" width="118" height="58" rx="6"/>
+  <text class="small" x="1257" y="455">Adders</text>
+  <text class="tiny" x="1251" y="475">sigma/ch/maj</text>
+  <text class="mono" x="1136" y="510">done after round 63</text>
+  <text class="metric" x="1108" y="526">area: dominant; cycles: 64/pass, 128/nonce/lane</text>
+
+  <rect class="core" x="1074" y="584" width="314" height="98" rx="8"/>
+  <text class="label" x="1130" y="615">Feed-Forward Add</text>
+  <text class="small" x="1112" y="643">base + workOut</text>
+  <text class="tiny" x="1112" y="661">base is midstate for pass 1, IV for pass 2</text>
+  <text class="metric" x="1112" y="678">area: medium adders; cycles: done cycle</text>
+
+  <rect class="check" x="1068" y="724" width="326" height="92" rx="8"/>
+  <text class="label" x="1114" y="754">Candidate Filter</text>
+  <text class="small" x="1101" y="781">reverse_bytes(final_digest) prefix</text>
+  <text class="tiny" x="1110" y="798">quick23 path: top 23 bits are zero</text>
+  <text class="metric" x="1110" y="813">area: small; cycles: same done cycle</text>
+
+  <rect class="box" x="618" y="710" width="226" height="100" rx="8"/>
+  <text class="label" x="642" y="740">Found Selector/Regs</text>
+  <text class="mono" x="650" y="768">nonce[31:0]</text>
+  <text class="tiny" x="650" y="789">hash recomputed by host</text>
+  <text class="metric" x="650" y="806">area: small; cycles: latch on hit</text>
+
+  <rect class="box" x="356" y="694" width="150" height="104" rx="8"/>
+  <text class="label" x="389" y="724">UART TX</text>
+  <text class="small" x="381" y="750">F response</text>
+  <text class="tiny" x="385" y="767">nonce only</text>
+  <text class="metric" x="376" y="784">area: tiny</text>
+  <text class="metric" x="376" y="798">5 bytes UART</text>
+
+  <rect class="core" x="356" y="568" width="210" height="94" rx="8"/>
+  <text class="label" x="397" y="599">Nonce Lanes</text>
+  <text class="mono" x="390" y="623">currentNonce += 4</text>
+  <text class="metric" x="390" y="641">area: small</text>
+  <text class="metric" x="390" y="656">next nonce starts immediately</text>
+
+  <rect class="note" x="618" y="846" width="770" height="74" rx="8"/>
+  <text class="label" x="645" y="876">Steady-state throughput</text>
+  <text class="small" x="645" y="899">Each lane spends 128 clocks per nonce. Four parallel lanes give one aggregate tested nonce every 32 clocks, about 843.75 kH/s at 27 MHz.</text>
+  <text class="metric" x="645" y="916">Area labels are approximate relative 20K synthesis weight; the four SHA compressors dominate LUT/carry usage.</text>
+
+  <path class="arrowBlue" d="M 274 193 C 300 193 320 230 356 238"/>
+  <text class="tiny" x="286" y="178">serial bytes</text>
+  <path class="arrowBlue" d="M 506 242 L 536 242"/>
+  <path class="arrowBlue" d="M 712 242 L 752 242"/>
+  <path class="arrow" d="M 864 316 L 864 338 C 864 370 838 390 844 421"/>
+  <path class="arrow" d="M 752 254 C 620 254 564 329 496 384"/>
+  <path class="arrow" d="M 566 454 L 618 421"/>
+  <path class="arrow" d="M 566 454 C 590 480 594 555 618 575"/>
+  <path class="arrowGreen" d="M 566 606 L 618 421"/>
+  <text class="tiny" x="472" y="555">nonce word</text>
+  <path class="arrow" d="M 844 421 L 896 466"/>
+  <path class="arrow" d="M 844 575 L 896 515"/>
+  <path class="arrow" d="M 976 245 C 1036 245 1040 348 1074 386"/>
+  <text class="tiny" x="989" y="258">midstate / target</text>
+  <path class="arrowGreen" d="M 1010 490 L 1074 400"/>
+  <text class="tiny" x="1006" y="459">stateIn + block</text>
+  <path class="arrowGreen" d="M 1231 530 L 1231 584"/>
+  <text class="tiny" x="1242" y="558">workOut</text>
+  <path class="arrowGreen" d="M 1074 632 C 984 632 952 600 844 575"/>
+  <text class="tiny" x="904" y="631">pass 1 digest</text>
+  <path class="arrowGreen" d="M 1231 682 L 1231 724"/>
+  <text class="tiny" x="1242" y="706">pass 2 digest</text>
+  <path class="arrow" d="M 1068 770 L 844 760"/>
+  <text class="tiny" x="914" y="751">hit</text>
+  <path class="arrow" d="M 1068 790 C 900 852 644 673 566 606"/>
+  <text class="tiny" x="848" y="842">miss: next nonce</text>
+  <path class="arrowBlue" d="M 618 760 L 506 746"/>
+  <path class="arrowBlue" d="M 356 738 C 282 738 250 304 190 268"/>
+  <text class="tiny" x="252" y="752">F response</text>
+  <path class="arrow dash" d="M 496 454 L 896 490"/>
+  <text class="tiny" x="641" y="500">control: first/second pass</text>
+  <path class="arrow dash" d="M 461 662 L 461 694"/>
+  <text class="tiny" x="486" y="672">LEDs expose nonce bits</text>
+</svg>

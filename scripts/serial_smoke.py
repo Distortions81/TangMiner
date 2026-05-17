@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import argparse
 import glob
+import hashlib
 import time
 
 import serial
 
-from make_job import compress, words_to_bytes, IV
+from make_job import IV, compress, parse_target, words_to_bytes
 
 
 GENESIS_HEADER = bytes.fromhex(
@@ -24,6 +25,11 @@ def make_packet(header, target, command=b"J"):
     return b"TN" + command + midstate + tail + target
 
 
+def bitcoin_hash_for_nonce(header, nonce):
+    candidate = header[:76] + nonce.to_bytes(4, "big")
+    return hashlib.sha256(hashlib.sha256(candidate).digest()).digest()
+
+
 def try_port(port, packet, baud, timeout, response_len):
     with serial.Serial(port, baudrate=baud, timeout=timeout, write_timeout=timeout) as ser:
         time.sleep(0.1)
@@ -40,17 +46,23 @@ def main():
     parser.add_argument("ports", nargs="*", help="serial ports to try")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--timeout", type=float, default=1.0)
+    parser.add_argument(
+        "--target",
+        default="all-ones",
+        help="target hex or alias: all-ones, quick23, quick21, quick3. quick23 averages about 10 seconds at 27 MHz with four lanes.",
+    )
     parser.add_argument("--echo", action="store_true", help="ask FPGA to echo the parsed job instead of hashing")
     parser.add_argument("--hardcoded", action="store_true", help="ask FPGA to run its built-in genesis nonce-zero job")
     args = parser.parse_args()
 
     ports = args.ports or sorted(glob.glob("/dev/cu.usbserial-*"))
-    expected_payload = make_packet(GENESIS_HEADER, b"\xff" * 32)[3:]
+    target = parse_target(args.target)
+    expected_payload = make_packet(GENESIS_HEADER, target)[3:]
     if args.hardcoded:
         packet = b"TNH"
     else:
-        packet = make_packet(GENESIS_HEADER, b"\xff" * 32, b"E" if args.echo else b"J")
-    response_len = 77 if args.echo else 37
+        packet = make_packet(GENESIS_HEADER, target, b"E" if args.echo else b"J")
+    response_len = 77 if args.echo else 5
 
     print(f"packet_len={len(packet)}")
     for port in ports:
@@ -76,10 +88,10 @@ def main():
                         print(f"first mismatch payload[{i}] got=0x{got:02x} expected=0x{exp:02x}")
                         break
             return
-        if not args.echo and len(response) == 37 and response[:1] == b"F":
+        if not args.echo and len(response) == 5 and response[:1] == b"F":
             nonce = int.from_bytes(response[1:5], "big")
-            digest = response[5:37].hex()
-            print(f"{port}: FOUND nonce=0x{nonce:08x} hash={digest}")
+            digest = bitcoin_hash_for_nonce(GENESIS_HEADER, nonce).hex()
+            print(f"{port}: FOUND nonce=0x{nonce:08x} host_hash={digest}")
             return
 
     raise SystemExit("no valid FPGA response")

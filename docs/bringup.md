@@ -10,4 +10,8 @@
 8. Add a simulation testbench with a known Bitcoin block header.
 9. Add a Mujina-side serial driver.
 
-The most important early check is endian correctness. The FPGA currently treats `midstate`, `tail`, `target`, and response `hash` as big-endian SHA-256 values. The host driver should own all Bitcoin wire-format conversion.
+The most important early check is endian correctness. The FPGA currently treats
+`midstate`, `tail`, and candidate-filter target aliases as big-endian SHA-256
+values, and it returns nonce bytes in the same wire order used in the hashed
+header. The host driver should own Bitcoin wire-format conversion, host-side
+double hashing, and exact target validation.

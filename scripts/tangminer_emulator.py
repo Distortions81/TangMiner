@@ -17,7 +17,15 @@ import tty
 from dataclasses import dataclass
 from typing import Optional, TextIO
 
-from make_job import IV, compress, words_to_bytes
+from make_job import (
+    ALL_ONES_TARGET,
+    IV,
+    QUICK3_TARGET,
+    QUICK21_TARGET,
+    QUICK23_TARGET,
+    compress,
+    words_to_bytes,
+)
 
 
 GENESIS_HEADER = bytes.fromhex(
@@ -29,12 +37,11 @@ GENESIS_HEADER = bytes.fromhex(
     "1dac2b7c"
 )
 
-ALL_ONES_TARGET = b"\xff" * 32
 GENESIS_EXPECTED_HASH_NONCE_ZERO = bytes.fromhex(
     "bf483998a9b44cbf5a113973e34da96b5cf3c7757d75ac3bd7c6b30af5a7c12b"
 )
 DEFAULT_HARDWARE_CLOCK_HZ = 27_000_000
-MEASURED_HARDWARE_CYCLES_PER_NONCE = 132
+MEASURED_HARDWARE_CYCLES_PER_NONCE = 32
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,24 @@ def bitcoin_hash(job: Job, nonce: int) -> bytes:
 
 def meets_target(digest: bytes, target: bytes) -> bool:
     return int.from_bytes(digest[::-1], "big") <= int.from_bytes(target, "big")
+
+
+def candidate_zero_bits_for_target(target: bytes) -> int:
+    if target == ALL_ONES_TARGET:
+        return 0
+    if target == QUICK3_TARGET:
+        return 3
+    if target == QUICK21_TARGET:
+        return 21
+    return 23
+
+
+def meets_hardware_candidate_filter(digest: bytes, target: bytes) -> bool:
+    zero_bits = candidate_zero_bits_for_target(target)
+    if zero_bits == 0:
+        return True
+    value = int.from_bytes(digest[::-1], "big")
+    return value >> (256 - zero_bits) == 0
 
 
 def format_rate(hashes_per_second: float) -> str:
@@ -188,9 +213,9 @@ class TangMinerEmulator:
                 self._report_stats("progress", scanned, started, now, last_report_scanned, last_report)
                 last_report = now
                 last_report_scanned = scanned
-            if meets_target(digest, job.target):
+            if meets_hardware_candidate_filter(digest, job.target):
                 self._report_stats("found", scanned, started, time.monotonic(), last_report_scanned, last_report)
-                return b"F" + nonce.to_bytes(4, "big") + digest
+                return b"F" + nonce.to_bytes(4, "big")
         self._report_stats("exhausted", limit, started, time.monotonic(), last_report_scanned, last_report)
         return b""
 
