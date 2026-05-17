@@ -14,50 +14,22 @@ to the host.
 
 [tn20k]: https://wiki.sipeed.com/hardware/en/tang/tang-nano-20k/nano-20k.html
 
-## Quick Commands
+## Software Emulation
 
-Build and test the selected Tang Nano 20K FPGA path:
-
-```sh
-make build
-make sim-cocotb-spinal TARGET=tangnano20k SIM=verilator
-make emu-smoke
-```
-
-Build and test the Stratum v1 client:
-
-```sh
-make -C stratum
-make -C stratum test
-make -C stratum smoke-fakes
-```
-
-Run the software FPGA emulator against the pool at about `5 kH/s`:
+Use this path first if you want to exercise Stratum, share validation, and
+submission without a Tang Nano board. It starts a software FPGA UART emulator,
+connects the C Stratum client to it, and mines against the default pool.
 
 ```sh
 make stratum-mine-software
 ```
 
-This uses the `quick3` software FPGA gate and suggests difficulty
-`0.0000046566`, which targets about `15` shares/minute at `5 kH/s`.
+Defaults:
 
-Run a normal Stratum mining session against a real TangMiner UART device:
-
-```sh
-make stratum-mine-hardware SERIAL_PORT=/dev/ttyUSB0
-```
-
-For manual hardware runs:
-
-```sh
-stratum/build/stratum-client \
-  --host tinyminer.m45core.com \
-  --port 3333 \
-  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
-  --pass x \
-  --serial-port /dev/ttyUSB0 \
-  --fpga-target quick21
-```
+- Pool: `tinyminer.m45core.com:3333`
+- Worker: `3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45`
+- Software FPGA gate: `quick3`
+- Suggested difficulty: `0.0000046566`, about `15` shares/minute at `5 kH/s`
 
 For manual software-emulated runs, start the emulator in one terminal and leave
 it running:
@@ -91,6 +63,43 @@ stratum/build/stratum-client \
 
 Use `--no-submit` on the Stratum command to validate candidates without sending
 shares to the pool.
+
+## Real Hardware
+
+Build and flash the selected Tang Nano 20K bitstream, then point the Stratum
+client at the board UART.
+
+```sh
+make build
+make load
+make stratum-mine-hardware SERIAL_PORT=/dev/ttyUSB0
+```
+
+The default 20K bitstream runs four SHA-256 lanes at `111 MHz`, modeled as
+`6.94 MH/s`. The hardware mining wrapper uses the `quick21` FPGA gate and a
+matching suggested difficulty.
+
+For manual hardware runs:
+
+```sh
+stratum/build/stratum-client \
+  --host tinyminer.m45core.com \
+  --port 3333 \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
+  --pass x \
+  --serial-port /dev/ttyUSB0 \
+  --fpga-target quick21
+```
+
+## Quick Tests
+
+```sh
+make -C stratum
+make -C stratum test
+make -C stratum smoke-fakes
+make emu-smoke
+make sim-cocotb-spinal TARGET=tangnano20k SIM=verilator
+```
 
 ## Current Status
 
