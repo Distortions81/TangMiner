@@ -32,7 +32,6 @@ This installs `cocotb` and `pyserial` into `.venv`.
 Run the software-only protocol smoke test:
 
 ```sh
-scripts/run_emulator_smoke.sh
 make emu-smoke TARGET=tangnano9k
 ```
 
@@ -56,6 +55,8 @@ scripts/launch_ubuntu_24_04.sh emu-pty
 ```
 
 The emulator prints a PTY path. Host software can open that path instead of `/dev/ttyUSB*` or `/dev/cu.usbserial-*`.
+`scripts/run_emulator.sh` also starts an automatic software benchmark job after the PTY is ready, so hashrate appears without a separate host client.
+The default reporting interval is 2 seconds; use `scripts/run_emulator.sh --stats-interval 1` to change it, `--stats-interval 0` to disable reports, or `--no-auto-benchmark` to skip the automatic job.
 
 This emulator does not execute RTL. It is only a host/protocol model.
 
@@ -70,7 +71,6 @@ source "$HOME/oss-cad-suite/environment"
 Run the top-level UART tests against the hand-written Verilog:
 
 ```sh
-scripts/run_rtl_sim.sh
 make sim-cocotb TARGET=tangnano9k SIM=verilator
 ```
 

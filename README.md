@@ -133,7 +133,6 @@ scripts/install_ubuntu_24_04.sh
 Run the lightweight protocol emulator smoke test:
 
 ```sh
-scripts/run_emulator_smoke.sh
 make emu-smoke TARGET=tangnano9k
 scripts/launch_ubuntu_24_04.sh emu-smoke
 ```
@@ -144,11 +143,22 @@ Run the software UART emulator as a pseudo-terminal:
 scripts/run_emulator.sh
 ```
 
+The wrapper starts an automatic software benchmark job after the PTY is ready,
+so hashrate appears without a separate host client. The emulator reports
+software-model hashrate to its terminal every 2 seconds while jobs run, plus a
+final line when the job finds a nonce or exhausts its nonce limit. Change the
+interval with:
+
+```sh
+scripts/run_emulator.sh --stats-interval 1
+```
+
+Use `--no-auto-benchmark` when you only want a quiet PTY for host software.
+
 Run top-level UART RTL simulation with cocotb and Verilator:
 
 ```sh
 source "$HOME/oss-cad-suite/environment"
-scripts/run_rtl_sim.sh
 make sim-cocotb TARGET=tangnano9k SIM=verilator
 scripts/launch_ubuntu_24_04.sh sim-cocotb
 ```

@@ -150,7 +150,7 @@ case "$command_name" in
     exec make emu-smoke TARGET="$target"
     ;;
   emu-pty)
-    exec make emu-pty TARGET="$target" EMU_TARGET="$target"
+    exec make emu-pty TARGET="$target" EMU_TARGET="$target" EMU_ARGS="$*"
     ;;
   sim-cocotb)
     exec make sim-cocotb TARGET="$target" SIM="$sim"

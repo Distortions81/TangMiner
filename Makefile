@@ -34,6 +34,7 @@ BOOTSTRAP_PYTHON ?= python3
 PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,$(if $(wildcard .venv/bin/python),.venv/bin/python,python3))
 SIM ?= verilator
 EMU_TARGET ?= $(TARGET)
+EMU_ARGS ?=
 
 .PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty check-cocotb sim-cocotb sim-cocotb-spinal
 
@@ -117,7 +118,7 @@ emu-smoke:
 	$(PYTHON) scripts/emulator_smoke.py
 
 emu-pty:
-	$(PYTHON) scripts/tangminer_emulator.py --board $(EMU_TARGET) --pty
+	$(PYTHON) scripts/tangminer_emulator.py --board $(EMU_TARGET) --pty $(EMU_ARGS)
 
 check-cocotb:
 	@$(PYTHON) -c "import cocotb" >/dev/null 2>&1 || { echo "cocotb is not installed. Run: make setup-emulation && . .venv/bin/activate"; exit 1; }

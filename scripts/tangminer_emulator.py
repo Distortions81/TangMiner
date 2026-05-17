@@ -11,9 +11,11 @@ import os
 import pty
 import select
 import sys
+import threading
+import time
 import tty
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TextIO
 
 from make_job import IV, compress, words_to_bytes
 
@@ -85,9 +87,26 @@ def meets_target(digest: bytes, target: bytes) -> bool:
     return int.from_bytes(digest[::-1], "big") <= int.from_bytes(target, "big")
 
 
+def _format_rate(hashes_per_second: float) -> str:
+    units = ("H/s", "kH/s", "MH/s", "GH/s")
+    rate = hashes_per_second
+    for unit in units:
+        if abs(rate) < 1000.0 or unit == units[-1]:
+            return f"{rate:.2f} {unit}"
+        rate /= 1000.0
+    return f"{rate:.2f} H/s"
+
+
 class TangMinerEmulator:
-    def __init__(self, max_nonces: Optional[int] = 1_000_000):
+    def __init__(
+        self,
+        max_nonces: Optional[int] = 1_000_000,
+        stats_interval: Optional[float] = None,
+        stats_stream: Optional[TextIO] = None,
+    ):
         self.max_nonces = max_nonces
+        self.stats_interval = stats_interval
+        self.stats_stream = stats_stream
         self._rx_state = "sync0"
         self._command = 0
         self._payload = bytearray()
@@ -140,11 +159,31 @@ class TangMinerEmulator:
 
     def _run_job(self, job: Job) -> bytes:
         limit = self.max_nonces if self.max_nonces is not None else 2**32
+        started = time.monotonic()
+        last_report = started
         for nonce in range(limit):
             digest = bitcoin_hash(job, nonce)
+            scanned = nonce + 1
+            now = time.monotonic()
+            if self.stats_interval and now - last_report >= self.stats_interval:
+                self._report_stats("progress", scanned, started, now)
+                last_report = now
             if meets_target(digest, job.target):
+                self._report_stats("found", scanned, started, time.monotonic())
                 return b"F" + nonce.to_bytes(4, "big") + digest
+        self._report_stats("exhausted", limit, started, time.monotonic())
         return b""
+
+    def _report_stats(self, state: str, scanned: int, started: float, now: float) -> None:
+        if not self.stats_stream:
+            return
+        elapsed = max(now - started, 1e-9)
+        rate = _format_rate(scanned / elapsed)
+        print(
+            f"hashrate state={state} scanned={scanned} elapsed={elapsed:.2f}s rate={rate}",
+            file=self.stats_stream,
+            flush=True,
+        )
 
 
 def _normalise_board(value: str) -> str:
@@ -171,13 +210,25 @@ def run_stdio(emulator: TangMinerEmulator) -> None:
             os.write(stdout_fd, response)
 
 
-def run_pty(emulator: TangMinerEmulator, board: str) -> None:
+def _write_auto_benchmark(slave_name: str) -> None:
+    job = build_job_from_header(GENESIS_HEADER, b"\x00" * 32)
+    packet = b"TNJ" + encode_job_payload(job)
+    # Give the PTY loop a moment to enter select before injecting the job.
+    time.sleep(0.1)
+    with open(slave_name, "wb", buffering=0) as slave:
+        slave.write(packet)
+
+
+def run_pty(emulator: TangMinerEmulator, board: str, auto_benchmark: bool = False) -> None:
     master_fd, slave_fd = pty.openpty()
     tty.setraw(slave_fd)
     slave_name = os.ttyname(slave_fd)
     os.close(slave_fd)
 
     print(f"TangMiner {board} software UART: {slave_name}", flush=True)
+    if auto_benchmark:
+        print("Starting automatic software hashrate benchmark...", file=sys.stderr, flush=True)
+        threading.Thread(target=_write_auto_benchmark, args=(slave_name,), daemon=True).start()
     try:
         while True:
             readable, _, _ = select.select([master_fd], [], [], 0.25)
@@ -211,6 +262,17 @@ def main() -> None:
         default=1_000_000,
         help="maximum nonces to scan per job; use 0 for the full 32-bit space",
     )
+    parser.add_argument(
+        "--stats-interval",
+        type=float,
+        default=2.0,
+        help="seconds between hashrate reports while hashing; use 0 to disable",
+    )
+    parser.add_argument(
+        "--auto-benchmark",
+        action="store_true",
+        help="inject an impossible-target benchmark job after the PTY starts",
+    )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--stdio", action="store_true", help="read binary protocol from stdin and write responses to stdout")
     mode.add_argument("--pty", action="store_true", help="create a pseudo-terminal that behaves like the FPGA UART")
@@ -221,11 +283,17 @@ def main() -> None:
         raise SystemExit("unsupported board label; use tangnano9k or tangnano20k")
 
     max_nonces = None if args.max_nonces == 0 else args.max_nonces
-    emulator = TangMinerEmulator(max_nonces=max_nonces)
+    stats_interval = None if args.stats_interval <= 0 else args.stats_interval
+    stats_stream = sys.stderr if stats_interval else None
+    emulator = TangMinerEmulator(
+        max_nonces=max_nonces,
+        stats_interval=stats_interval,
+        stats_stream=stats_stream,
+    )
     if args.stdio:
         run_stdio(emulator)
     else:
-        run_pty(emulator, board)
+        run_pty(emulator, board, auto_benchmark=args.auto_benchmark)
 
 
 if __name__ == "__main__":
