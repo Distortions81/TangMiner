@@ -443,7 +443,10 @@ class BitcoinHashCore extends Component {
   }
 }
 
-class Top extends Component {
+class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24) extends Component {
+  require(clksPerBit > 1, "clksPerBit must leave room for UART start-bit centering")
+  require(resetCounterBits > 0, "resetCounterBits must be positive")
+
   setDefinitionName("top")
   noIoPrefix()
 
@@ -455,12 +458,12 @@ class Top extends Component {
   }
 
   val coreArea = new ClockingArea(ClockDomain(io.clk, config = ClockDomainConfig(resetKind = BOOT))) {
-    val ClksPerBit = 234
+    val ClksPerBit = clksPerBit
     val JobBytes = 76
     val FoundRespBytes = 37
     val EchoRespBytes = 77
 
-    val resetCounter = Reg(UInt(24 bits)) init 0
+    val resetCounter = Reg(UInt(resetCounterBits bits)) init 0
     val reset = !resetCounter.msb
     when(!resetCounter.msb) {
       resetCounter := resetCounter + 1
@@ -661,4 +664,11 @@ object GenerateVerilog extends App {
     targetDirectory = "build/spinal",
     defaultConfigForClockDomains = ClockDomainConfig(resetKind = BOOT)
   ).generateVerilog(new Top)
+}
+
+object GenerateSimVerilog extends App {
+  SpinalConfig(
+    targetDirectory = "build/spinal-sim",
+    defaultConfigForClockDomains = ClockDomainConfig(resetKind = BOOT)
+  ).generateVerilog(new Top(clksPerBit = 8, resetCounterBits = 4))
 }

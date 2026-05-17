@@ -39,6 +39,7 @@ Main tools:
 - [sbt](https://github.com/sbt/sbt) for building and running the SpinalHDL generator.
 - [OpenJDK](https://github.com/openjdk/jdk) for the JVM used by sbt and SpinalHDL.
 - [Icarus Verilog](https://github.com/steveicarus/iverilog), provided by OSS CAD Suite as `iverilog` and `vvp`, for the legacy Verilog simulations.
+- [cocotb](https://www.cocotb.org/) with Verilator or Icarus for software-only UART-level RTL simulation.
 
 ## Installing The Complete Toolchain
 
@@ -113,6 +114,45 @@ Build the legacy hand-written Verilog bitstream for comparison:
 ```sh
 make build-verilog
 ```
+
+## Software-Only Emulation And RTL Simulation
+
+Set up the Python tools:
+
+```sh
+make setup-emulation
+. .venv/bin/activate
+```
+
+On Ubuntu 24.04, the repo installer can set up `.venv` and a local OSS CAD Suite install:
+
+```sh
+scripts/install_ubuntu_24_04.sh
+```
+
+Run the lightweight protocol emulator smoke test:
+
+```sh
+make emu-smoke TARGET=tangnano9k
+scripts/launch_ubuntu_24_04.sh emu-smoke
+```
+
+Run top-level UART RTL simulation with cocotb and Verilator:
+
+```sh
+source "$HOME/oss-cad-suite/environment"
+make sim-cocotb TARGET=tangnano9k SIM=verilator
+scripts/launch_ubuntu_24_04.sh sim-cocotb
+```
+
+If Java and sbt are installed, run the same cocotb tests against simulation-tuned SpinalHDL-generated Verilog:
+
+```sh
+make sim-cocotb-spinal TARGET=tangnano9k SIM=verilator
+scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
+```
+
+See [docs/software-emulation.md](docs/software-emulation.md) for the emulator, pseudo-terminal, and simulator options.
 
 ## Load To SRAM
 

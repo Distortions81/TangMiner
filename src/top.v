@@ -4,16 +4,25 @@ module top (
     output uart_tx_pin,
     output [5:0] led
 );
+`ifdef SIM_FAST_UART
+    localparam CLKS_PER_BIT = 8;
+`else
     localparam CLKS_PER_BIT = 234; // 27 MHz / 115200 baud.
+`endif
     localparam JOB_BYTES = 76;
     localparam FOUND_RESP_BYTES = 37;
     localparam ECHO_RESP_BYTES = 77;
+`ifdef SIM_FAST_RESET
+    localparam RESET_COUNTER_BIT = 3;
+`else
+    localparam RESET_COUNTER_BIT = 23;
+`endif
 
     reg [23:0] reset_counter = 24'd0;
-    wire reset = !reset_counter[23];
+    wire reset = !reset_counter[RESET_COUNTER_BIT];
 
     always @(posedge clk) begin
-        if (!reset_counter[23]) begin
+        if (!reset_counter[RESET_COUNTER_BIT]) begin
             reset_counter <= reset_counter + 24'd1;
         end
     end

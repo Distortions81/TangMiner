@@ -3,4 +3,7 @@ target/
 .venv/
 __pycache__/
 *.vcd
+*.fst
+results.xml
+sim_build/
 local/

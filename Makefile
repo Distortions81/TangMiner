@@ -18,6 +18,7 @@ TOP := top
 BUILD := build
 SRC := src/top.v src/uart_rx.v src/uart_tx.v src/bitcoin_hash_core.v src/sha256_compress.v
 SPINAL_SRC := $(BUILD)/spinal/top.v
+SPINAL_SIM_SRC := $(BUILD)/spinal-sim/top.v
 SPINAL_PREFIX := $(BUILD)/tangminer_spinal_$(TARGET)
 VERILOG_PREFIX := $(BUILD)/tangminer_verilog_$(TARGET)
 OSS_CAD_SUITE ?= $(HOME)/oss-cad-suite
@@ -29,8 +30,12 @@ OPENFPGALOADER := $(TOOLBIN)/openFPGALoader
 IVERILOG := $(TOOLBIN)/iverilog
 VVP := $(TOOLBIN)/vvp
 SBT ?= sbt
+BOOTSTRAP_PYTHON ?= python3
+PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,$(if $(wildcard .venv/bin/python),.venv/bin/python,python3))
+SIM ?= verilator
+EMU_TARGET ?= $(TARGET)
 
-.PHONY: all build build-verilog spinal-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin
+.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty check-cocotb sim-cocotb sim-cocotb-spinal
 
 all: build
 
@@ -42,12 +47,17 @@ build-spinal: $(SPINAL_PREFIX).fs
 
 spinal-verilog: $(SPINAL_SRC)
 
+spinal-sim-verilog: $(SPINAL_SIM_SRC)
+
 $(BUILD)/.dir:
 	mkdir -p $(BUILD)
 	touch $@
 
 $(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties | $(BUILD)/.dir
 	$(SBT) "runMain tangminer.GenerateVerilog"
+
+$(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties | $(BUILD)/.dir
+	$(SBT) "runMain tangminer.GenerateSimVerilog"
 
 $(VERILOG_PREFIX).json: $(SRC) | $(BUILD)/.dir
 	$(YOSYS) -p "read_verilog $(SRC); synth_gowin -top $(TOP) -json $@"
@@ -92,6 +102,33 @@ sim-sha: | $(BUILD)/.dir
 sim-bitcoin: | $(BUILD)/.dir
 	$(IVERILOG) -g2012 -o $(BUILD)/tb_bitcoin_hash_core sim/tb_bitcoin_hash_core.v src/bitcoin_hash_core.v src/sha256_compress.v
 	$(VVP) $(BUILD)/tb_bitcoin_hash_core
+
+setup-emulation:
+	$(BOOTSTRAP_PYTHON) -m venv .venv
+	. .venv/bin/activate && pip install -r requirements-emulation.txt
+
+install-ubuntu:
+	scripts/install_ubuntu_24_04.sh --target $(TARGET)
+
+launch:
+	scripts/launch_ubuntu_24_04.sh --target $(TARGET)
+
+emu-smoke:
+	$(PYTHON) scripts/emulator_smoke.py
+
+emu-pty:
+	$(PYTHON) scripts/tangminer_emulator.py --board $(EMU_TARGET) --pty
+
+check-cocotb:
+	@$(PYTHON) -c "import cocotb" >/dev/null 2>&1 || { echo "cocotb is not installed. Run: make setup-emulation && . .venv/bin/activate"; exit 1; }
+	@if [ "$(SIM)" = "verilator" ]; then PATH="$(TOOLBIN):$$PATH"; if ! command -v verilator >/dev/null 2>&1; then echo "verilator is not on PATH. Install OSS CAD Suite or your distro's verilator package."; exit 127; fi; fi
+	@if [ "$(SIM)" = "icarus" ]; then PATH="$(TOOLBIN):$$PATH"; if ! command -v iverilog >/dev/null 2>&1 || ! command -v vvp >/dev/null 2>&1; then echo "iverilog/vvp are not on PATH. Install OSS CAD Suite or Icarus Verilog."; exit 127; fi; fi
+
+sim-cocotb: check-cocotb
+	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))"
+
+sim-cocotb-spinal: $(SPINAL_SIM_SRC) check-cocotb
+	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))" RTL_SOURCES="$(abspath $(SPINAL_SIM_SRC))" EXTRA_COMPILE_ARGS= CLKS_PER_BIT=8
 
 clean:
 	rm -rf $(BUILD)
