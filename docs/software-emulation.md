@@ -55,8 +55,10 @@ scripts/launch_ubuntu_24_04.sh emu-pty
 ```
 
 The emulator prints a PTY path. Host software can open that path instead of `/dev/ttyUSB*` or `/dev/cu.usbserial-*`.
-`scripts/run_emulator.sh` also starts an automatic software benchmark job after the PTY is ready, so hashrate appears without a separate host client.
+`scripts/run_emulator.sh` also starts an automatic benchmark job after the PTY is ready, so hashrate appears without a separate host client.
 The default reporting interval is 2 seconds; use `scripts/run_emulator.sh --stats-interval 1` to change it, `--stats-interval 0` to disable reports, or `--no-auto-benchmark` to skip the automatic job.
+These lines are tagged `source=hardware_estimate` by default because they report the measured RTL cycle-count rate, not Python emulator speed.
+Use `--stats-source software` only when you want to measure the software model itself.
 
 This emulator does not execute RTL. It is only a host/protocol model.
 
@@ -105,3 +107,4 @@ scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
 ```
 
 This uses `GenerateSimVerilog`, which keeps the production top-level ports but shortens the UART divider and reset counter for simulation. The normal `make build TARGET=tangnano9k` path still uses the production timing.
+The SpinalHDL cocotb run also prints a `source=rtl_cycles` hashrate line derived from RTL nonce-counter cycles, so that estimate is independent of simulator wall-clock speed.

@@ -39,7 +39,8 @@ while (($#)); do
 done
 
 if ((auto_benchmark)); then
-  echo "An automatic software benchmark job will start after the PTY is ready."
+  echo "An automatic benchmark job will start after the PTY is ready."
+  echo "Default hashrate output is the hardware estimate, not Python emulator speed."
   emulator_args=(--auto-benchmark "${emulator_args[@]}")
 else
   echo "Automatic software benchmark disabled."

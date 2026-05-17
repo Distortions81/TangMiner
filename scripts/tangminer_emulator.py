@@ -33,6 +33,8 @@ ALL_ONES_TARGET = b"\xff" * 32
 GENESIS_EXPECTED_HASH_NONCE_ZERO = bytes.fromhex(
     "bf483998a9b44cbf5a113973e34da96b5cf3c7757d75ac3bd7c6b30af5a7c12b"
 )
+DEFAULT_HARDWARE_CLOCK_HZ = 27_000_000
+MEASURED_HARDWARE_CYCLES_PER_NONCE = 132
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,7 @@ def meets_target(digest: bytes, target: bytes) -> bool:
     return int.from_bytes(digest[::-1], "big") <= int.from_bytes(target, "big")
 
 
-def _format_rate(hashes_per_second: float) -> str:
+def format_rate(hashes_per_second: float) -> str:
     units = ("H/s", "kH/s", "MH/s", "GH/s")
     rate = hashes_per_second
     for unit in units:
@@ -97,16 +99,32 @@ def _format_rate(hashes_per_second: float) -> str:
     return f"{rate:.2f} H/s"
 
 
+def hardware_hashrate(clock_hz: int, cycles_per_nonce: int) -> float:
+    return clock_hz / cycles_per_nonce
+
+
 class TangMinerEmulator:
     def __init__(
         self,
         max_nonces: Optional[int] = 1_000_000,
         stats_interval: Optional[float] = None,
         stats_stream: Optional[TextIO] = None,
+        stats_source: str = "hardware",
+        hardware_clock_hz: int = DEFAULT_HARDWARE_CLOCK_HZ,
+        hardware_cycles_per_nonce: int = MEASURED_HARDWARE_CYCLES_PER_NONCE,
     ):
+        if stats_source not in ("hardware", "software"):
+            raise ValueError("stats_source must be hardware or software")
+        if hardware_clock_hz <= 0:
+            raise ValueError("hardware_clock_hz must be positive")
+        if hardware_cycles_per_nonce <= 0:
+            raise ValueError("hardware_cycles_per_nonce must be positive")
         self.max_nonces = max_nonces
         self.stats_interval = stats_interval
         self.stats_stream = stats_stream
+        self.stats_source = stats_source
+        self.hardware_clock_hz = hardware_clock_hz
+        self.hardware_cycles_per_nonce = hardware_cycles_per_nonce
         self._rx_state = "sync0"
         self._command = 0
         self._payload = bytearray()
@@ -161,26 +179,54 @@ class TangMinerEmulator:
         limit = self.max_nonces if self.max_nonces is not None else 2**32
         started = time.monotonic()
         last_report = started
+        last_report_scanned = 0
         for nonce in range(limit):
             digest = bitcoin_hash(job, nonce)
             scanned = nonce + 1
             now = time.monotonic()
             if self.stats_interval and now - last_report >= self.stats_interval:
-                self._report_stats("progress", scanned, started, now)
+                self._report_stats("progress", scanned, started, now, last_report_scanned, last_report)
                 last_report = now
+                last_report_scanned = scanned
             if meets_target(digest, job.target):
-                self._report_stats("found", scanned, started, time.monotonic())
+                self._report_stats("found", scanned, started, time.monotonic(), last_report_scanned, last_report)
                 return b"F" + nonce.to_bytes(4, "big") + digest
-        self._report_stats("exhausted", limit, started, time.monotonic())
+        self._report_stats("exhausted", limit, started, time.monotonic(), last_report_scanned, last_report)
         return b""
 
-    def _report_stats(self, state: str, scanned: int, started: float, now: float) -> None:
+    def _report_stats(
+        self,
+        state: str,
+        scanned: int,
+        started: float,
+        now: float,
+        last_scanned: int,
+        last_report: float,
+    ) -> None:
         if not self.stats_stream:
             return
         elapsed = max(now - started, 1e-9)
-        rate = _format_rate(scanned / elapsed)
+        if self.stats_source == "hardware":
+            rate_hps = hardware_hashrate(self.hardware_clock_hz, self.hardware_cycles_per_nonce)
+            print(
+                "hashrate source=hardware_estimate "
+                f"state={state} scanned={scanned} elapsed={elapsed:.2f}s "
+                f"cycles_per_nonce={self.hardware_cycles_per_nonce} "
+                f"clock_hz={self.hardware_clock_hz} "
+                f"rate={format_rate(rate_hps)} rate_hps={rate_hps:.2f}",
+                file=self.stats_stream,
+                flush=True,
+            )
+            return
+
+        window_elapsed = max(now - last_report, 1e-9)
+        window_scanned = max(scanned - last_scanned, 0)
+        rate = format_rate(scanned / elapsed)
+        window_rate = format_rate(window_scanned / window_elapsed)
         print(
-            f"hashrate state={state} scanned={scanned} elapsed={elapsed:.2f}s rate={rate}",
+            "hashrate source=software_model "
+            f"state={state} scanned={scanned} elapsed={elapsed:.2f}s "
+            f"rate={rate} window_rate={window_rate}",
             file=self.stats_stream,
             flush=True,
         )
@@ -227,7 +273,7 @@ def run_pty(emulator: TangMinerEmulator, board: str, auto_benchmark: bool = Fals
 
     print(f"TangMiner {board} software UART: {slave_name}", flush=True)
     if auto_benchmark:
-        print("Starting automatic software hashrate benchmark...", file=sys.stderr, flush=True)
+        print("Starting automatic hashrate benchmark...", file=sys.stderr, flush=True)
         threading.Thread(target=_write_auto_benchmark, args=(slave_name,), daemon=True).start()
     try:
         while True:
@@ -269,6 +315,24 @@ def main() -> None:
         help="seconds between hashrate reports while hashing; use 0 to disable",
     )
     parser.add_argument(
+        "--stats-source",
+        choices=("hardware", "software"),
+        default="hardware",
+        help="report hardware cycle estimate by default; use software for Python emulator speed",
+    )
+    parser.add_argument(
+        "--hardware-clock-hz",
+        type=int,
+        default=DEFAULT_HARDWARE_CLOCK_HZ,
+        help="hardware clock used for source=hardware hashrate reports",
+    )
+    parser.add_argument(
+        "--hardware-cycles-per-nonce",
+        type=int,
+        default=MEASURED_HARDWARE_CYCLES_PER_NONCE,
+        help="measured RTL cycles per nonce used for source=hardware hashrate reports",
+    )
+    parser.add_argument(
         "--auto-benchmark",
         action="store_true",
         help="inject an impossible-target benchmark job after the PTY starts",
@@ -289,6 +353,9 @@ def main() -> None:
         max_nonces=max_nonces,
         stats_interval=stats_interval,
         stats_stream=stats_stream,
+        stats_source=args.stats_source,
+        hardware_clock_hz=args.hardware_clock_hz,
+        hardware_cycles_per_nonce=args.hardware_cycles_per_nonce,
     )
     if args.stdio:
         run_stdio(emulator)

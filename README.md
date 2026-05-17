@@ -143,17 +143,18 @@ Run the software UART emulator as a pseudo-terminal:
 scripts/run_emulator.sh
 ```
 
-The wrapper starts an automatic software benchmark job after the PTY is ready,
-so hashrate appears without a separate host client. The emulator reports
-software-model hashrate to its terminal every 2 seconds while jobs run, plus a
-final line when the job finds a nonce or exhausts its nonce limit. Change the
-interval with:
+The wrapper starts an automatic benchmark job after the PTY is ready, so
+hashrate appears without a separate host client. By default it reports
+`source=hardware_estimate`, computed from the measured RTL cycle count and the
+configured hardware clock. Change the interval with:
 
 ```sh
 scripts/run_emulator.sh --stats-interval 1
 ```
 
 Use `--no-auto-benchmark` when you only want a quiet PTY for host software.
+Use `--stats-source software` only when you want to measure Python emulator
+execution speed.
 
 Run top-level UART RTL simulation with cocotb and Verilator:
 
@@ -169,6 +170,19 @@ If Java and sbt are installed, run the same cocotb tests against simulation-tune
 make sim-cocotb-spinal TARGET=tangnano9k SIM=verilator
 scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
 ```
+
+The SpinalHDL cocotb suite includes a cycle-count hashrate check. It reports
+`source=rtl_cycles` by watching the RTL nonce counter and computing the
+hardware-rate estimate from simulated clock cycles, not simulator wall-clock
+time. At the default Tang Nano `27 MHz` clock, the active compact SHA-256 core
+currently measures:
+
+```text
+27 MHz / 132 clocks per nonce = 204.5 kH/s
+```
+
+Set `HARDWARE_CLOCK_HZ` when running cocotb to report the same measured cycle
+count at a different planned hardware clock.
 
 See [docs/software-emulation.md](docs/software-emulation.md) for the emulator, pseudo-terminal, and simulator options.
 

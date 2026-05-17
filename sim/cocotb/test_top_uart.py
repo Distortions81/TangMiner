@@ -8,12 +8,15 @@ from tangminer_emulator import (
     ALL_ONES_TARGET,
     GENESIS_EXPECTED_HASH_NONCE_ZERO,
     GENESIS_HEADER,
+    bitcoin_hash,
     build_job_from_header,
     encode_job_payload,
+    format_rate,
 )
 
 
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
+HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "27000000"))
 
 
 def _clock(signal, period, unit):
@@ -78,6 +81,37 @@ async def _uart_read(dut, length):
     return bytes([await _uart_read_byte(dut) for _ in range(length)])
 
 
+def _resolve_signal(dut, *names):
+    for name in names:
+        try:
+            signal = getattr(dut, name)
+            signal.value
+            return signal
+        except (AttributeError, ValueError):
+            pass
+    raise AssertionError(f"none of these internal signals were found: {', '.join(names)}")
+
+
+async def _wait_for_nonce(dut, nonce_signal, target, start_cycle, max_cycles=5_000):
+    cycle = start_cycle
+    for _ in range(max_cycles):
+        if nonce_signal.value.is_resolvable and int(nonce_signal.value) >= target:
+            return cycle
+        await RisingEdge(dut.clk)
+        cycle += 1
+    raise AssertionError(f"timed out waiting for nonce {target}")
+
+
+async def _wait_for_nonce_value(dut, nonce_signal, value, start_cycle, max_cycles=5_000):
+    cycle = start_cycle
+    for _ in range(max_cycles):
+        if nonce_signal.value.is_resolvable and int(nonce_signal.value) == value:
+            return cycle
+        await RisingEdge(dut.clk)
+        cycle += 1
+    raise AssertionError(f"timed out waiting for nonce value {value}")
+
+
 @cocotb.test()
 async def top_echoes_job_payload(dut):
     await _start_clock(dut)
@@ -104,6 +138,57 @@ async def top_hashes_genesis_nonce_zero(dut):
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x00\x00"
     assert response[5:] == GENESIS_EXPECTED_HASH_NONCE_ZERO
+
+
+@cocotb.test()
+async def top_hashes_genesis_nonce_three(dut):
+    await _start_clock(dut)
+
+    all_ones_job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
+    expected_hash = bitcoin_hash(all_ones_job, 3)
+    target = expected_hash[::-1]
+    job = build_job_from_header(GENESIS_HEADER, target)
+    payload = encode_job_payload(job)
+
+    await _uart_write(dut, b"TNJ" + payload)
+
+    response = await _uart_read(dut, 37)
+    assert response[:1] == b"F"
+    assert response[1:5] == b"\x00\x00\x00\x03"
+    assert response[5:] == expected_hash
+
+
+@cocotb.test()
+async def top_reports_cycle_accurate_hashrate(dut):
+    await _start_clock(dut)
+
+    nonce_signal = _resolve_signal(dut, "current_nonce", "coreArea_core_io_currentNonce")
+    job = build_job_from_header(GENESIS_HEADER, b"\x00" * 32)
+    payload = encode_job_payload(job)
+
+    await _uart_write(dut, b"TNJ" + payload)
+
+    cycle = 0
+    cycle = await _wait_for_nonce_value(dut, nonce_signal, 0, cycle)
+    nonce_cycles = {}
+    for nonce in range(1, 5):
+        cycle = await _wait_for_nonce(dut, nonce_signal, nonce, cycle)
+        nonce_cycles[nonce] = cycle
+
+    deltas = [nonce_cycles[nonce] - nonce_cycles[nonce - 1] for nonce in range(2, 5)]
+    assert min(deltas) == max(deltas), f"non-steady nonce cycle deltas: {deltas}"
+
+    cycles_per_nonce = deltas[0]
+    hashes_per_second = HARDWARE_CLOCK_HZ / cycles_per_nonce
+    dut._log.info(
+        "hashrate source=rtl_cycles "
+        f"cycles_per_nonce={cycles_per_nonce} "
+        f"clock_hz={HARDWARE_CLOCK_HZ} "
+        f"rate={format_rate(hashes_per_second)} "
+        f"rate_hps={hashes_per_second:.2f}"
+    )
+
+    await _uart_write(dut, b"TNS")
 
 
 @cocotb.test()

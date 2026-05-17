@@ -35,12 +35,13 @@ object Sha256 {
     value(511 - index * 32 downto 480 - index * 32).asUInt
 
   def rotr(x: UInt, n: Int): UInt = (x.rotateRight(n)).resize(32)
+  def shr(x: UInt, n: Int): UInt = (B(0, n bits) ## x.asBits(31 downto n)).asUInt
   def ch(x: UInt, y: UInt, z: UInt): UInt = ((x & y) ^ (~x & z)).resize(32)
   def maj(x: UInt, y: UInt, z: UInt): UInt = ((x & y) ^ (x & z) ^ (y & z)).resize(32)
   def bigSigma0(x: UInt): UInt = (rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22)).resize(32)
   def bigSigma1(x: UInt): UInt = (rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25)).resize(32)
-  def smallSigma0(x: UInt): UInt = (rotr(x, 7) ^ rotr(x, 18) ^ (x >> 3).resize(32)).resize(32)
-  def smallSigma1(x: UInt): UInt = (rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10).resize(32)).resize(32)
+  def smallSigma0(x: UInt): UInt = (rotr(x, 7) ^ rotr(x, 18) ^ shr(x, 3)).resize(32)
+  def smallSigma1(x: UInt): UInt = (rotr(x, 17) ^ rotr(x, 19) ^ shr(x, 10)).resize(32)
 
   def concatWords(words: Seq[UInt]): Bits = words.map(_.asBits).reduce(_ ## _)
 
@@ -333,25 +334,35 @@ class BitcoinHashCore extends Component {
   }
 
   val state = Reg(State()) init State.idle
-  val shaStart = Reg(Bool()) init False
-  val shaStateIn = Reg(Bits(256 bits)) init 0
-  val shaBlock = Reg(Bits(512 bits)) init 0
+  val shaStart = Bool()
+  val shaStateIn = Bits(256 bits)
+  val shaBlock = Bits(512 bits)
   val firstDigest = Reg(Bits(256 bits)) init 0
+  val jobMidstateReg = Reg(Bits(256 bits)) init 0
+  val jobTailReg = Reg(Bits(96 bits)) init 0
+  val jobTargetReg = Reg(Bits(256 bits)) init 0
   val runningReg = Reg(Bool()) init False
   val foundReg = Reg(Bool()) init False
   val foundNonceReg = Reg(UInt(32 bits)) init 0
   val foundHashReg = Reg(Bits(256 bits)) init 0
   val currentNonceReg = Reg(UInt(32 bits)) init 0
 
+  shaStart := False
+  shaStateIn := 0
+  shaBlock := 0
+
+  val flushPipeline = io.stop || (io.start && state =/= State.idle)
+
   val sha = new Sha256Compress
-  sha.io.reset := io.reset
+  sha.io.reset := io.reset || flushPipeline
   sha.io.start := shaStart
   sha.io.stateIn := shaStateIn
   sha.io.block := shaBlock
 
   val shaIv = B(Sha256.Iv.map(v => B(v, 32 bits)).reduce(_ ## _))
+
   val firstBlock =
-    io.tail(95 downto 64) ## io.tail(63 downto 32) ## io.tail(31 downto 0) ## currentNonceReg.asBits ##
+    jobTailReg(95 downto 64) ## jobTailReg(63 downto 32) ## jobTailReg(31 downto 0) ## currentNonceReg.asBits ##
       B"32'h80000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
       B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ##
       B"32'h00000000" ## B"32'h00000000" ## B"32'h00000000" ## B"32'h00000280"
@@ -368,35 +379,38 @@ class BitcoinHashCore extends Component {
 
   when(io.reset) {
     state := State.idle
-    shaStart := False
-    shaStateIn := 0
-    shaBlock := 0
     firstDigest := 0
+    jobMidstateReg := 0
+    jobTailReg := 0
+    jobTargetReg := 0
     runningReg := False
     foundReg := False
     foundNonceReg := 0
     foundHashReg := 0
     currentNonceReg := 0
   } otherwise {
-    shaStart := False
-
     when(io.stop) {
       state := State.idle
       runningReg := False
+      foundReg := False
+    } elsewhen(io.start) {
+      state := State.firstStart
+      firstDigest := 0
+      jobMidstateReg := io.midstate
+      jobTailReg := io.tail
+      jobTargetReg := io.target
+      currentNonceReg := 0
+      runningReg := True
+      foundReg := False
     } otherwise {
       switch(state) {
         is(State.idle) {
           foundReg := False
           runningReg := False
-          when(io.start) {
-            currentNonceReg := 0
-            runningReg := True
-            state := State.firstStart
-          }
         }
         is(State.firstStart) {
           when(!sha.io.busy) {
-            shaStateIn := io.midstate
+            shaStateIn := jobMidstateReg
             shaBlock := firstBlock
             shaStart := True
             state := State.firstWait
@@ -418,10 +432,11 @@ class BitcoinHashCore extends Component {
         }
         is(State.secondWait) {
           when(sha.io.done) {
-            when(Sha256.reverseBytes256(sha.io.stateOut).asUInt <= io.target.asUInt) {
+            when(Sha256.reverseBytes256(sha.io.stateOut).asUInt <= jobTargetReg.asUInt) {
               foundReg := True
               foundNonceReg := currentNonceReg
               foundHashReg := sha.io.stateOut
+              runningReg := False
               state := State.report
             } otherwise {
               currentNonceReg := currentNonceReg + 1
@@ -431,12 +446,6 @@ class BitcoinHashCore extends Component {
         }
         is(State.report) {
           runningReg := False
-          when(io.start) {
-            foundReg := False
-            currentNonceReg := 0
-            runningReg := True
-            state := State.firstStart
-          }
         }
       }
     }
