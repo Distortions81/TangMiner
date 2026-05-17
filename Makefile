@@ -73,7 +73,7 @@ SWEEP_ARGS ?=
 SPINAL_CLOCK_HZ ?= $(shell $(PYTHON) -c 'print(int(round(float("$(SPINAL_CLOCK_MHZ)") * 1000000)))')
 SPINAL_CYCLES_PER_NONCE ?= $(shell $(PYTHON) -c 'print(64.0 / float("$(SPINAL_LANES)"))')
 
-.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal sweep-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine stratum-client stratum-test check-cocotb sim-cocotb sim-cocotb-spinal FORCE
+.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal sweep-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine stratum-client stratum-test stratum-mine-software stratum-mine-hardware check-cocotb sim-cocotb sim-cocotb-spinal FORCE
 
 all: build
 
@@ -196,6 +196,12 @@ stratum-client:
 
 stratum-test:
 	$(MAKE) -C stratum test
+
+stratum-mine-software: stratum-client
+	scripts/stratum_mine.sh software
+
+stratum-mine-hardware: stratum-client
+	scripts/stratum_mine.sh hardware "$(SERIAL_PORT)"
 
 check-cocotb:
 	@$(PYTHON) -c "import cocotb" >/dev/null 2>&1 || { echo "cocotb is not installed. Run: make setup-emulation && . .venv/bin/activate"; exit 1; }

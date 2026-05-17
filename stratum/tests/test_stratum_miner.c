@@ -105,11 +105,13 @@ static void test_work_builder_packet_and_validation(void) {
     tangminer_builder_init(&builder);
     check(tangminer_builder_set_extranonce(&builder, "abcd", 4), "set extranonce");
     tangminer_builder_set_difficulty(&builder, 0.00000001);
-    check(tangminer_builder_set_fpga_target(&builder, "all-ones"), "set fpga target");
+    check(!tangminer_builder_set_fpga_target(&builder, "share"), "reject share FPGA target");
+    check(!tangminer_builder_set_fpga_target(&builder, "all-ones"), "reject all-ones FPGA target");
+    check(tangminer_builder_set_fpga_target(&builder, "quick3"), "set fpga target");
     check(tangminer_build_work(&builder, &notify, &work), "build work");
     check(work.packet[0] == 'T' && work.packet[1] == 'N' && work.packet[2] == 'J', "packet command");
     check(strcmp(work.extranonce2_hex, "01000000") == 0, "first extranonce2 value");
-    check(work.packet[47] == 0xff && work.packet[78] == 0xff, "all-ones FPGA target");
+    check(work.packet[47] == 0x1f && work.packet[78] == 0xff, "quick3 FPGA target");
 
     check(tangminer_validate_nonce(&work, 0, hash, &meets_share, &meets_block), "validate nonce");
     to_hex(hash, sizeof(hash), hash_hex, sizeof(hash_hex));

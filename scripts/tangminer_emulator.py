@@ -140,6 +140,7 @@ class TangMinerEmulator:
         stats_source: str = "hardware",
         hardware_clock_hz: int = DEFAULT_HARDWARE_CLOCK_HZ,
         hardware_cycles_per_nonce: float = MEASURED_HARDWARE_CYCLES_PER_NONCE,
+        candidate_target_override: Optional[bytes] = None,
     ):
         if stats_source not in ("hardware", "software"):
             raise ValueError("stats_source must be hardware or software")
@@ -153,6 +154,7 @@ class TangMinerEmulator:
         self.stats_source = stats_source
         self.hardware_clock_hz = hardware_clock_hz
         self.hardware_cycles_per_nonce = hardware_cycles_per_nonce
+        self.candidate_target_override = candidate_target_override
         self._rx_state = "sync0"
         self._command = 0
         self._payload = bytearray()
@@ -197,11 +199,16 @@ class TangMinerEmulator:
                 self._rx_state = "sync0"
                 if self._command == ord("E"):
                     return b"E" + payload
-                return self._run_job(decode_job_payload(payload))
+                return self._run_job(self._candidate_job(decode_job_payload(payload)))
             return b""
 
         self._rx_state = "sync0"
         return b""
+
+    def _candidate_job(self, job: Job) -> Job:
+        if self.candidate_target_override is None:
+            return job
+        return Job(midstate=job.midstate, tail=job.tail, target=self.candidate_target_override)
 
     def _run_job(self, job: Job) -> bytes:
         limit = self.max_nonces if self.max_nonces is not None else 2**32

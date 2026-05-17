@@ -144,9 +144,7 @@ static void build_share_target(uint8_t target[32], double difficulty) {
 }
 
 bool tangminer_builder_set_fpga_target(tangminer_builder_t* builder, const char* name) {
-    if (strcmp(name, "all-ones") == 0 || strcmp(name, "easy") == 0) {
-        memset(builder->fpga_target, 0xff, 32);
-    } else if (strcmp(name, "quick3") == 0) {
+    if (strcmp(name, "quick3") == 0) {
         memset(builder->fpga_target, 0xff, 32);
         builder->fpga_target[0] = 0x1f;
     } else if (strcmp(name, "quick21") == 0) {
@@ -165,8 +163,6 @@ bool tangminer_builder_set_fpga_target(tangminer_builder_t* builder, const char*
         builder->fpga_target[1] = 0x00;
         builder->fpga_target[2] = 0x00;
         builder->fpga_target[3] = 0x3f;
-    } else if (strcmp(name, "share") == 0) {
-        memset(builder->fpga_target, 0, 32);
     } else {
         return false;
     }
@@ -312,12 +308,7 @@ bool tangminer_build_work(
     out->packet[2] = 'J';
     memcpy(out->packet + 3, midstate, 32);
     memcpy(out->packet + 35, out->header + 64, 12);
-    memcpy(out->packet + 47,
-           builder->fpga_target[0] || builder->fpga_target[1] || builder->fpga_target[2] ||
-                   builder->fpga_target[3]
-               ? builder->fpga_target
-               : out->share_target,
-           32);
+    memcpy(out->packet + 47, builder->fpga_target, 32);
     snprintf(out->job_id, sizeof(out->job_id), "%s", notify->job_id);
     snprintf(out->ntime, sizeof(out->ntime), "%s", notify->ntime);
     bytes_to_hex(builder->extranonce2, builder->extranonce2_size, out->extranonce2_hex, sizeof(out->extranonce2_hex));

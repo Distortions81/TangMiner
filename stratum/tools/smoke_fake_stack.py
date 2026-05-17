@@ -91,7 +91,7 @@ def main() -> int:
                 "--serial-port",
                 fpga_match.group(1),
                 "--fpga-target",
-                "all-ones",
+                "quick3",
                 "--quiet",
             ],
             cwd=REPO_ROOT,

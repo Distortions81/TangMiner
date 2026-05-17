@@ -18,7 +18,23 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+from make_job import QUICK3_TARGET, QUICK21_TARGET, QUICK23_TARGET, QUICK26_TARGET  # noqa: E402
 from tangminer_emulator import TangMinerEmulator  # noqa: E402
+
+
+QUICK_TARGETS = {
+    "quick3": QUICK3_TARGET,
+    "quick21": QUICK21_TARGET,
+    "quick23": QUICK23_TARGET,
+    "quick26": QUICK26_TARGET,
+}
+
+
+def parse_quick_target(name: str):
+    key = name.lower().replace("-", "")
+    if key not in QUICK_TARGETS:
+        raise argparse.ArgumentTypeError("target must be quick3, quick21, quick23, or quick26")
+    return QUICK_TARGETS[key]
 
 
 class FastFakeFpga:
@@ -118,10 +134,21 @@ def main() -> int:
     parser.add_argument("--drop-every", type=int, default=0, help="drop response every N jobs")
     parser.add_argument("--max-jobs", type=int, default=0, help="exit after N TNJ jobs; 0 runs forever")
     parser.add_argument("--max-nonces", type=int, default=1_000_000, help="hash-mode scan limit")
+    parser.add_argument(
+        "--target",
+        type=parse_quick_target,
+        default=None,
+        metavar="quick3|quick21|quick23|quick26",
+        help="hash-mode candidate filter override; defaults to the TNJ packet target",
+    )
     args = parser.parse_args()
 
     if args.mode == "hash":
-        fake = TangMinerEmulator(max_nonces=args.max_nonces, stats_interval=None)
+        fake = TangMinerEmulator(
+            max_nonces=args.max_nonces,
+            stats_interval=None,
+            candidate_target_override=args.target,
+        )
     else:
         fake = FastFakeFpga(
             nonce=int(args.nonce, 16),

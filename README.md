@@ -32,7 +32,22 @@ make -C stratum test
 make -C stratum smoke-fakes
 ```
 
+Run the software FPGA emulator against the pool at about `5 kH/s`:
+
+```sh
+make stratum-mine-software
+```
+
+This uses the `quick3` software FPGA gate and suggests difficulty
+`0.0000046566`, which targets about `15` shares/minute at `5 kH/s`.
+
 Run a normal Stratum mining session against a real TangMiner UART device:
+
+```sh
+make stratum-mine-hardware SERIAL_PORT=/dev/ttyUSB0
+```
+
+For manual hardware runs:
 
 ```sh
 stratum/build/stratum-client \
@@ -44,15 +59,16 @@ stratum/build/stratum-client \
   --fpga-target quick21
 ```
 
-Run the software FPGA emulator against the same pool at about `5 kH/s`.
-Start the emulator in one terminal and leave it running:
+For manual software-emulated runs, start the emulator in one terminal and leave
+it running:
 
 ```sh
-python3 stratum/tools/fake_fpga.py --mode hash --max-nonces 100000
+python3 stratum/tools/fake_fpga.py --mode hash --target quick3 --max-nonces 100000
 ```
 
-The fake FPGA command does not take a target. It receives the current candidate
-target from the `TNJ` job packet; set that on the client with `--fpga-target`.
+The fake FPGA `--target` is only the software candidate gate. Keep it on a
+quick filter for 5 kH/s runs; the host still validates returned candidates
+against the pool share target before submitting.
 
 It prints a pseudo-terminal path such as:
 
@@ -70,7 +86,7 @@ stratum/build/stratum-client \
   --pass x \
   --serial-port /dev/pts/N \
   --fpga-target quick3 \
-  --suggest-difficulty 0.0000049892
+  --suggest-difficulty 0.0000046566
 ```
 
 Use `--no-submit` on the Stratum command to validate candidates without sending
