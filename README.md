@@ -51,6 +51,9 @@ Start the emulator in one terminal and leave it running:
 python3 stratum/tools/fake_fpga.py --mode hash --max-nonces 100000
 ```
 
+The fake FPGA command does not take a target. It receives the current candidate
+target from the `TNJ` job packet; set that on the client with `--fpga-target`.
+
 It prints a pseudo-terminal path such as:
 
 ```text
