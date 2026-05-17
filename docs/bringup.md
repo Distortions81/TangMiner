@@ -39,7 +39,7 @@ The SpinalHDL cocotb run should include a `source=rtl_cycles` hashrate line.
 For the current 20K model, the expected rate is:
 
 ```text
-100,285,714 Hz / 16 clocks per aggregate nonce = 6.27 MH/s
+111,000,000 Hz / 16 clocks per aggregate nonce = 6.94 MH/s
 ```
 
 ## 3. Build The Bitstream
@@ -50,9 +50,9 @@ Build the default 20K target:
 make build
 ```
 
-Inspect the nextpnr output for timing and resource utilization. The current
-known-good 20K route reports `116.90 MHz` Fmax against the `100.29 MHz` hash
-clock constraint.
+Inspect the nextpnr output for timing and resource utilization. The selected
+20K route reports `119.13 MHz` Fmax against the `111.00 MHz` hash clock
+constraint.
 
 ## 4. Load Or Flash
 
@@ -113,8 +113,8 @@ make hardware-mine MINE_ARGS='--target quick21 --count 5 /dev/cu.usbserial-*'
 ```
 
 `quick21` is useful for frequent hardware-miner logs, `quick23` averages about
-`1.3 s` per candidate, and `quick26` averages about `10.7 s` per candidate on
-the `100.286 MHz` 20K build.
+`1.2 s` per candidate, and `quick26` averages about `9.7 s` per candidate on
+the `111 MHz` 20K build.
 
 ## 7. Integrate A Host Miner
 

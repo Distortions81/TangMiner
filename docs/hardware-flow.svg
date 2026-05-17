@@ -49,7 +49,7 @@
 
   <rect class="fpga" x="320" y="104" width="1132" height="758"/>
   <text class="sectionLabel" x="344" y="136">Tang Nano FPGA fabric</text>
-  <text class="tiny" x="344" y="158">27 MHz input through internal rPLL to 100.286 MHz hash clock</text>
+  <text class="tiny" x="344" y="158">27 MHz input through internal rPLL to 111 MHz hash clock</text>
 
   <rect class="box" x="356" y="198" width="150" height="98" rx="8"/>
   <text class="label" x="389" y="227">UART RX</text>
@@ -149,7 +149,7 @@
 
   <rect class="note" x="618" y="846" width="770" height="74" rx="8"/>
   <text class="label" x="645" y="876">Steady-state throughput</text>
-  <text class="small" x="645" y="899">Each lane launches a new nonce every 64 clocks. Four parallel lanes give one aggregate tested nonce every 16 clocks, about 6.27 MH/s at 100.286 MHz.</text>
+  <text class="small" x="645" y="899">Each lane launches a new nonce every 64 clocks. Four parallel lanes give one aggregate tested nonce every 16 clocks, about 6.94 MH/s at 111 MHz.</text>
   <text class="metric" x="645" y="916">Area labels are approximate relative 20K synthesis weight; the eight SHA compressors dominate LUT/carry usage.</text>
 
   <path class="arrowBlue" d="M 274 193 C 300 193 320 230 356 238"/>

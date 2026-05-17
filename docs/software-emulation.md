@@ -20,7 +20,7 @@ the Tang Nano 9K.
 The current 20K hardware model is:
 
 ```text
-100.286 MHz / 16 aggregate clocks per nonce = 6.27 MH/s
+111 MHz / 16 aggregate clocks per nonce = 6.94 MH/s
 ```
 
 The Python software miner intentionally defaults to a much easier `quick14`

@@ -6,26 +6,52 @@ FAMILY := GW1N-9C
 DEVICE := GW1NR-LV9QN88PC6/I5
 CST := constr/tangnano9k.cst
 SPINAL_USE_PLL ?= 0
-SPINAL_CLOCK_MHZ ?= 27
-SPINAL_CLKS_PER_BIT ?= 234
+SPINAL_CLOCK_PROFILE ?= 27m
 else ifeq ($(TARGET),tangnano20k)
 BOARD := tangnano20k
 FAMILY := GW2A-18C
 DEVICE := GW2AR-LV18QN88C8/I7
 CST := constr/tangnano20k.cst
 SPINAL_USE_PLL ?= 1
-SPINAL_CLOCK_MHZ ?= 100.286
-SPINAL_CLKS_PER_BIT ?= 871
+SPINAL_CLOCK_PROFILE ?= 111m
 else
 $(error Unsupported TARGET '$(TARGET)'. Use tangnano20k or tangnano9k)
 endif
 
+ifeq ($(SPINAL_CLOCK_PROFILE),27m)
+SPINAL_CLOCK_MHZ ?= 27
+SPINAL_CLKS_PER_BIT ?= 234
+else ifeq ($(SPINAL_CLOCK_PROFILE),90m)
+SPINAL_CLOCK_MHZ ?= 90.000
+SPINAL_CLKS_PER_BIT ?= 781
+else ifeq ($(SPINAL_CLOCK_PROFILE),100m286)
+SPINAL_CLOCK_MHZ ?= 100.286
+SPINAL_CLKS_PER_BIT ?= 871
+else ifeq ($(SPINAL_CLOCK_PROFILE),111m)
+SPINAL_CLOCK_MHZ ?= 111.000
+SPINAL_CLKS_PER_BIT ?= 964
+else ifeq ($(SPINAL_CLOCK_PROFILE),120m)
+SPINAL_CLOCK_MHZ ?= 120.000
+SPINAL_CLKS_PER_BIT ?= 1042
+else
+$(error Unsupported SPINAL_CLOCK_PROFILE '$(SPINAL_CLOCK_PROFILE)'. Use 27m, 90m, 100m286, 111m, or 120m)
+endif
+
+ifeq ($(TARGET),tangnano9k)
+ifneq ($(SPINAL_CLOCK_PROFILE),27m)
+$(error TARGET=tangnano9k only supports SPINAL_CLOCK_PROFILE=27m)
+endif
+endif
+
+SPINAL_LANES ?= 4
 TOP := top
 BUILD := build
 SRC := src/top.v src/uart_rx.v src/uart_tx.v src/bitcoin_hash_core.v src/sha256_compress.v
 SPINAL_DIR := $(BUILD)/spinal/$(TARGET)
 SPINAL_SRC := $(SPINAL_DIR)/top.v
 SPINAL_SIM_SRC := $(BUILD)/spinal-sim/top.v
+SPINAL_CONFIG := $(SPINAL_DIR)/.config
+SPINAL_SIM_CONFIG := $(dir $(SPINAL_SIM_SRC)).config
 SPINAL_PREFIX := $(BUILD)/tangminer_spinal_$(TARGET)
 VERILOG_PREFIX := $(BUILD)/tangminer_verilog_$(TARGET)
 OSS_CAD_SUITE ?= $(HOME)/oss-cad-suite
@@ -43,8 +69,11 @@ SIM ?= verilator
 EMU_TARGET ?= $(TARGET)
 EMU_ARGS ?=
 MINE_ARGS ?=
+SWEEP_ARGS ?=
+SPINAL_CLOCK_HZ ?= $(shell $(PYTHON) -c 'print(int(round(float("$(SPINAL_CLOCK_MHZ)") * 1000000)))')
+SPINAL_CYCLES_PER_NONCE ?= $(shell $(PYTHON) -c 'print(64.0 / float("$(SPINAL_LANES)"))')
 
-.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine stratum-client stratum-test check-cocotb sim-cocotb sim-cocotb-spinal
+.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal sweep-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine stratum-client stratum-test check-cocotb sim-cocotb sim-cocotb-spinal FORCE
 
 all: build
 
@@ -58,16 +87,40 @@ spinal-verilog: $(SPINAL_SRC)
 
 spinal-sim-verilog: $(SPINAL_SIM_SRC)
 
+FORCE:
+
 $(BUILD)/.dir:
 	mkdir -p $(BUILD)
 	touch $@
 
-$(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties | $(BUILD)/.dir
+$(SPINAL_CONFIG): FORCE | $(BUILD)/.dir
 	mkdir -p $(SPINAL_DIR)
-	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) $(SBT) "runMain tangminer.GenerateVerilog"
+	@tmp="$@.tmp"; \
+	{ \
+	  echo "target=$(TARGET)"; \
+	  echo "lanes=$(SPINAL_LANES)"; \
+	  echo "clock_profile=$(SPINAL_CLOCK_PROFILE)"; \
+	  echo "clock_mhz=$(SPINAL_CLOCK_MHZ)"; \
+	  echo "use_pll=$(SPINAL_USE_PLL)"; \
+	  echo "clks_per_bit=$(SPINAL_CLKS_PER_BIT)"; \
+	} > "$$tmp"; \
+	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm "$$tmp"; fi
 
-$(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties | $(BUILD)/.dir
-	$(SBT) "runMain tangminer.GenerateSimVerilog"
+$(SPINAL_SIM_CONFIG): FORCE | $(BUILD)/.dir
+	mkdir -p $(dir $(SPINAL_SIM_SRC))
+	@tmp="$@.tmp"; \
+	{ \
+	  echo "lanes=$(SPINAL_LANES)"; \
+	  echo "clks_per_bit=8"; \
+	} > "$$tmp"; \
+	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm "$$tmp"; fi
+
+$(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_CONFIG) | $(BUILD)/.dir
+	mkdir -p $(SPINAL_DIR)
+	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) $(SBT) "runMain tangminer.GenerateVerilog"
+
+$(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_SIM_CONFIG) | $(BUILD)/.dir
+	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 $(SBT) "runMain tangminer.GenerateSimVerilog"
 
 $(VERILOG_PREFIX).json: $(SRC) | $(BUILD)/.dir
 	$(YOSYS) -p "read_verilog $(SRC); synth_gowin -top $(TOP) -json $@"
@@ -135,6 +188,9 @@ software-mine:
 hardware-mine:
 	$(PYTHON) scripts/hardware_mine.py $(MINE_ARGS)
 
+sweep-spinal:
+	$(PYTHON) scripts/sweep_spinal_variants.py $(SWEEP_ARGS)
+
 stratum-client:
 	$(MAKE) -C stratum
 
@@ -150,7 +206,7 @@ sim-cocotb: check-cocotb
 	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))"
 
 sim-cocotb-spinal: $(SPINAL_SIM_SRC) check-cocotb
-	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))" RTL_SOURCES="$(abspath $(SPINAL_SIM_SRC))" EXTRA_COMPILE_ARGS= CLKS_PER_BIT=8
+	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))" RTL_SOURCES="$(abspath $(SPINAL_SIM_SRC))" EXTRA_COMPILE_ARGS= CLKS_PER_BIT=8 LANE_COUNT=$(SPINAL_LANES) HARDWARE_CLOCK_HZ=$(SPINAL_CLOCK_HZ)
 
 clean:
 	rm -rf $(BUILD)

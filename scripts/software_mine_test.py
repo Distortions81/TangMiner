@@ -160,7 +160,7 @@ def main():
     )
     parser.add_argument("--software-hashrate-hz", type=float, default=DEFAULT_SOFTWARE_HASHRATE_HZ)
     parser.add_argument("--hardware-clock-hz", type=int, default=DEFAULT_HARDWARE_CLOCK_HZ)
-    parser.add_argument("--hardware-cycles-per-nonce", type=int, default=MEASURED_HARDWARE_CYCLES_PER_NONCE)
+    parser.add_argument("--hardware-cycles-per-nonce", type=float, default=MEASURED_HARDWARE_CYCLES_PER_NONCE)
     args = parser.parse_args()
 
     target, zero_bits = parse_software_target(args.target)

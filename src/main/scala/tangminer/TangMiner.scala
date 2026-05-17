@@ -3,14 +3,40 @@ package tangminer
 import spinal.core._
 import spinal.lib._
 
-class GowinRpll100MhzFrom27Mhz extends BlackBox {
+case class GowinClockProfile(
+  name: String,
+  clockMhz: Double,
+  clksPerBit: Int,
+  usePll: Boolean,
+  idivSel: Int = 0,
+  fbdivSel: Int = 0,
+  odivSel: Int = 0
+)
+
+object GowinClockProfiles {
+  val Profiles = Map(
+    "27m" -> GowinClockProfile("27m", 27.0, 234, usePll = false),
+    "90m" -> GowinClockProfile("90m", 90.0, 781, usePll = true, idivSel = 2, fbdivSel = 9, odivSel = 8),
+    "100m286" -> GowinClockProfile("100m286", 100.286, 871, usePll = true, idivSel = 6, fbdivSel = 25, odivSel = 8),
+    "111m" -> GowinClockProfile("111m", 111.0, 964, usePll = true, idivSel = 8, fbdivSel = 36, odivSel = 8),
+    "120m" -> GowinClockProfile("120m", 120.0, 1042, usePll = true, idivSel = 8, fbdivSel = 39, odivSel = 8)
+  )
+
+  def byName(name: String): GowinClockProfile =
+    Profiles.getOrElse(
+      name,
+      throw new IllegalArgumentException(s"unsupported clock profile '$name'; supported profiles: ${Profiles.keys.toSeq.sorted.mkString(", ")}")
+    )
+}
+
+class GowinRpllFrom27Mhz(profile: GowinClockProfile) extends BlackBox {
   setDefinitionName("rPLL")
   noIoPrefix()
 
   addGeneric("FCLKIN", "27.0")
-  addGeneric("IDIV_SEL", 6)
-  addGeneric("FBDIV_SEL", 25)
-  addGeneric("ODIV_SEL", 8)
+  addGeneric("IDIV_SEL", profile.idivSel)
+  addGeneric("FBDIV_SEL", profile.fbdivSel)
+  addGeneric("ODIV_SEL", profile.odivSel)
 
   val io = new Bundle {
     val CLKOUT = out Bool()
@@ -568,9 +594,17 @@ class BitcoinHashCore extends Component {
   }
 }
 
-class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24, usePll: Boolean = false) extends Component {
+class Top(
+  clksPerBit: Int = 234,
+  resetCounterBits: Int = 24,
+  usePll: Boolean = false,
+  laneCount: Int = 4,
+  clockProfile: GowinClockProfile = GowinClockProfiles.byName("111m")
+) extends Component {
   require(clksPerBit > 1, "clksPerBit must leave room for UART start-bit centering")
   require(resetCounterBits > 0, "resetCounterBits must be positive")
+  require(laneCount > 0, "laneCount must be positive")
+  require(!usePll || clockProfile.usePll, s"clock profile '${clockProfile.name}' does not define PLL settings")
 
   setDefinitionName("top")
   noIoPrefix()
@@ -586,7 +620,7 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24, usePll: Boolean = f
   val systemClockLocked = Bool()
 
   if (usePll) {
-    val pll = new GowinRpll100MhzFrom27Mhz
+    val pll = new GowinRpllFrom27Mhz(clockProfile)
     pll.io.CLKIN := io.clk
     pll.io.CLKFB := False
     pll.io.FBDSEL := 0
@@ -609,7 +643,7 @@ class Top(clksPerBit: Int = 234, resetCounterBits: Int = 24, usePll: Boolean = f
     val JobBytes = 76
     val FoundRespBytes = 5
     val EchoRespBytes = 77
-    val LaneCount = 4
+    val LaneCount = laneCount
     val CandidateAlways = U(0, 3 bits)
     val CandidateQuick3 = U(1, 3 bits)
     val CandidateQuick21 = U(2, 3 bits)
@@ -889,19 +923,33 @@ object GenerateVerilog extends App {
   def envInt(name: String, default: Int): Int =
     sys.env.get(name).map(_.toInt).getOrElse(default)
 
+  def envString(names: Seq[String], default: String): String =
+    names.collectFirst(Function.unlift(sys.env.get)).getOrElse(default)
+
+  def envInt(names: Seq[String], default: Int): Int =
+    names.collectFirst(Function.unlift(sys.env.get)).map(_.toInt).getOrElse(default)
+
   val targetDirectory = sys.env.getOrElse("TANGMINER_VERILOG_DIR", "build/spinal")
   val usePll = envBoolean("TANGMINER_USE_PLL", default = false)
-  val clksPerBit = envInt("TANGMINER_CLKS_PER_BIT", default = 234)
+  val clockProfile = GowinClockProfiles.byName(envString(Seq("TANGMINER_CLOCK_PROFILE", "SPINAL_CLOCK_PROFILE"), "111m"))
+  val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), clockProfile.clksPerBit)
+  val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 4)
 
   SpinalConfig(
     targetDirectory = targetDirectory,
     defaultConfigForClockDomains = ClockDomainConfig(resetKind = BOOT)
-  ).generateVerilog(new Top(clksPerBit = clksPerBit, usePll = usePll))
+  ).generateVerilog(new Top(clksPerBit = clksPerBit, usePll = usePll, laneCount = laneCount, clockProfile = clockProfile))
 }
 
 object GenerateSimVerilog extends App {
+  def envInt(names: Seq[String], default: Int): Int =
+    names.collectFirst(Function.unlift(sys.env.get)).map(_.toInt).getOrElse(default)
+
+  val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 4)
+  val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), 8)
+
   SpinalConfig(
     targetDirectory = "build/spinal-sim",
     defaultConfigForClockDomains = ClockDomainConfig(resetKind = BOOT)
-  ).generateVerilog(new Top(clksPerBit = 8, resetCounterBits = 4))
+  ).generateVerilog(new Top(clksPerBit = clksPerBit, resetCounterBits = 4, laneCount = laneCount, clockProfile = GowinClockProfiles.byName("27m")))
 }

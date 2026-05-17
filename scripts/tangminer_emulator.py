@@ -45,8 +45,8 @@ GENESIS_HEADER = bytes.fromhex(
 GENESIS_EXPECTED_HASH_NONCE_ZERO = bytes.fromhex(
     "bf483998a9b44cbf5a113973e34da96b5cf3c7757d75ac3bd7c6b30af5a7c12b"
 )
-DEFAULT_HARDWARE_CLOCK_HZ = 100_285_714
-MEASURED_HARDWARE_CYCLES_PER_NONCE = 16
+DEFAULT_HARDWARE_CLOCK_HZ = 111_000_000
+MEASURED_HARDWARE_CYCLES_PER_NONCE = 16.0
 
 
 @dataclass(frozen=True)
@@ -127,7 +127,7 @@ def format_rate(hashes_per_second: float) -> str:
     return f"{rate:.2f} H/s"
 
 
-def hardware_hashrate(clock_hz: int, cycles_per_nonce: int) -> float:
+def hardware_hashrate(clock_hz: int, cycles_per_nonce: float) -> float:
     return clock_hz / cycles_per_nonce
 
 
@@ -139,7 +139,7 @@ class TangMinerEmulator:
         stats_stream: Optional[TextIO] = None,
         stats_source: str = "hardware",
         hardware_clock_hz: int = DEFAULT_HARDWARE_CLOCK_HZ,
-        hardware_cycles_per_nonce: int = MEASURED_HARDWARE_CYCLES_PER_NONCE,
+        hardware_cycles_per_nonce: float = MEASURED_HARDWARE_CYCLES_PER_NONCE,
     ):
         if stats_source not in ("hardware", "software"):
             raise ValueError("stats_source must be hardware or software")
@@ -239,7 +239,7 @@ class TangMinerEmulator:
             print(
                 "hashrate source=hardware_estimate "
                 f"state={state} scanned={scanned} elapsed={elapsed:.2f}s "
-                f"cycles_per_nonce={self.hardware_cycles_per_nonce} "
+                f"cycles_per_nonce={self.hardware_cycles_per_nonce:g} "
                 f"clock_hz={self.hardware_clock_hz} "
                 f"rate={format_rate(rate_hps)} rate_hps={rate_hps:.2f}",
                 file=self.stats_stream,
@@ -356,7 +356,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--hardware-cycles-per-nonce",
-        type=int,
+        type=float,
         default=MEASURED_HARDWARE_CYCLES_PER_NONCE,
         help="measured RTL cycles per nonce used for source=hardware hashrate reports",
     )

@@ -19,10 +19,10 @@ to the host.
 - Default target: Tang Nano 20K (`TARGET=tangnano20k`).
 - Gateware: four compact pass-pipelined SHA-256 lanes in
   `src/main/scala/tangminer/TangMiner.scala`.
-- Clocking: onboard `27 MHz` through a Gowin `rPLL` to `100.286 MHz`.
-- Modeled rate: one aggregate nonce every `16` fabric clocks, or `6.27 MH/s`.
-- Timing: the current 20K route reports `116.90 MHz` Fmax and passes the
-  `100.29 MHz` constraint.
+- Clocking: onboard `27 MHz` through a Gowin `rPLL` to `111 MHz`.
+- Modeled rate: one aggregate nonce every `16` fabric clocks, or `6.94 MH/s`.
+- Timing: the selected 20K route reports `119.13 MHz` Fmax and passes the
+  `111.00 MHz` constraint with `7.3%` margin.
 - Protocol: fixed `115200 8N1` binary UART with nonce-only `F || nonce`
   candidate responses.
 - Candidate filtering: cheap FPGA-side prefix filters (`quick3`, `quick21`,
@@ -191,8 +191,8 @@ make hardware-mine MINE_ARGS='--target quick21 /dev/cu.usbserial-*'
 ```
 
 `quick21` is the default `hardware_mine.py` target for frequent miner-style
-logs. `quick23` averages about `1.3 s` per candidate on the 20K build, and
-`quick26` averages about `10.7 s`.
+logs. `quick23` averages about `1.2 s` per candidate on the 20K build, and
+`quick26` averages about `9.7 s`.
 
 ## UART Contract
 
@@ -219,7 +219,7 @@ See [docs/uart-protocol.md](docs/uart-protocol.md) for the complete protocol.
 - Tang Nano 20K FPGA: `GW2AR-LV18QN88C8/I7`, family `GW2A-18C`.
 - Tang Nano 9K FPGA: `GW1NR-LV9QN88PC6/I5`, family `GW1N-9C`.
 - Board clock: `27 MHz`.
-- 20K hash clock: internal rPLL to `100.286 MHz`.
+- 20K hash clock: internal rPLL to `111 MHz`.
 - 9K clock path: direct `27 MHz` board clock.
 - UART: `115200 8N1`, no flow control.
 

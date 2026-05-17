@@ -136,7 +136,7 @@ def main():
     parser.add_argument("--count", type=int, default=0, help="candidate count to print; default 0 runs until interrupted")
     parser.add_argument("--verbose", action="store_true", help="print observed serial timing and rates on each share")
     parser.add_argument("--hardware-clock-hz", type=int, default=DEFAULT_HARDWARE_CLOCK_HZ)
-    parser.add_argument("--hardware-cycles-per-nonce", type=int, default=MEASURED_HARDWARE_CYCLES_PER_NONCE)
+    parser.add_argument("--hardware-cycles-per-nonce", type=float, default=MEASURED_HARDWARE_CYCLES_PER_NONCE)
     args = parser.parse_args()
 
     ports = args.ports or default_ports()

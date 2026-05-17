@@ -20,8 +20,8 @@ from tangminer_emulator import (
 
 
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
-HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "100285714"))
-LANE_COUNT = 4
+HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "111000000"))
+LANE_COUNT = int(os.environ.get("LANE_COUNT", "4"))
 
 
 def _clock(signal, period, unit):
@@ -192,13 +192,15 @@ async def top_reports_cycle_accurate_hashrate(dut):
         for nonce in range(LANE_COUNT * 2, LANE_COUNT * 5, LANE_COUNT)
     ]
     assert min(lane_deltas) == max(lane_deltas), f"non-steady lane cycle deltas: {lane_deltas}"
-    assert lane_deltas[0] % LANE_COUNT == 0, f"lane delta does not divide across lanes: {lane_deltas[0]}"
 
-    cycles_per_nonce = lane_deltas[0] // LANE_COUNT
-    hashes_per_second = HARDWARE_CLOCK_HZ / cycles_per_nonce
+    lane_period_cycles = lane_deltas[0]
+    cycles_per_nonce = lane_period_cycles / LANE_COUNT
+    hashes_per_second = HARDWARE_CLOCK_HZ * LANE_COUNT / lane_period_cycles
     dut._log.info(
         "hashrate source=rtl_cycles "
-        f"cycles_per_nonce={cycles_per_nonce} "
+        f"lane_count={LANE_COUNT} "
+        f"lane_period_cycles={lane_period_cycles} "
+        f"cycles_per_nonce={cycles_per_nonce:.3f} "
         f"clock_hz={HARDWARE_CLOCK_HZ} "
         f"rate={format_rate(hashes_per_second)} "
         f"rate_hps={hashes_per_second:.2f}"

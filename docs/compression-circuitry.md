@@ -55,8 +55,8 @@ four-lane 20K path. The host validates the returned candidate nonce by
 rebuilding the header and double-hashing it. If more than one lane is reporting,
 the top level latches one selected result before UART transmit.
 
-For bring-up with frequent candidate output on the default `100.286 MHz` 20K
-build, the host tools accept the named target `quick23`:
+For bring-up with frequent candidate output on the default `111 MHz` 20K build,
+the host tools accept the named target `quick23`:
 
 ```text
 000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff

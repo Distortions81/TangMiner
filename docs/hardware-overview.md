@@ -25,11 +25,12 @@ At a high level:
   full share target comparison.
 
 On the 20K build, the onboard `27 MHz` clock feeds an internal Gowin `rPLL` that
-drives the hash fabric at `100.286 MHz`. In steady state each lane launches a new
+drives the hash fabric at `111 MHz`. In steady state each lane launches a new
 nonce every `64` FPGA clocks because its first-pass and second-pass compressors
 run at the same time. With four lanes, the aggregate chip cadence is one tested
-nonce every `16` clocks, or about `6.27 MH/s`. The current 20K place-and-route
-run reports `116.90 MHz` Fmax and passes the `100.29 MHz` timing constraint.
+nonce every `16` clocks, or about `6.94 MH/s`. The selected 20K
+place-and-route run reports `119.13 MHz` Fmax and passes the `111.00 MHz`
+timing constraint with `7.3%` margin.
 
 These boxes are logical hardware blocks. After synthesis, they become Gowin
 FPGA LUTs, flip-flops, carry chains, IO buffers, and routing rather than
