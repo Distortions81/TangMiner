@@ -342,3 +342,13 @@ bool tangminer_validate_nonce(
 void tangminer_nonce_to_hex(uint32_t nonce, char out[9]) {
     snprintf(out, 9, "%08x", nonce);
 }
+
+void tangminer_nonce_to_submit_hex(uint32_t nonce, char out[9]) {
+    /* The FPGA nonce is in header byte order; Stratum submit wants the displayed uint32 form. */
+    snprintf(out, 9,
+             "%02x%02x%02x%02x",
+             (unsigned)(nonce & 0xffU),
+             (unsigned)((nonce >> 8) & 0xffU),
+             (unsigned)((nonce >> 16) & 0xffU),
+             (unsigned)((nonce >> 24) & 0xffU));
+}

@@ -149,9 +149,11 @@ static void* miner_thread_main(void* arg) {
         bool meets_share = false;
         bool meets_block = false;
         char nonce_hex[9];
+        char submit_nonce_hex[9];
         char hash_hex[65];
         tangminer_validate_nonce(&work, nonce, hash, &meets_share, &meets_block);
         tangminer_nonce_to_hex(nonce, nonce_hex);
+        tangminer_nonce_to_submit_hex(nonce, submit_nonce_hex);
         hash_to_hex(hash, hash_hex);
 
         pthread_mutex_lock(&state->lock);
@@ -165,7 +167,7 @@ static void* miner_thread_main(void* arg) {
                    meets_block ? "yes" : "no",
                    hash_hex);
             if (meets_share && state->submit) {
-                queue_share(state, &work, nonce_hex);
+                queue_share(state, &work, submit_nonce_hex);
             }
         }
         pthread_mutex_unlock(&state->lock);

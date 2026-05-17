@@ -14,6 +14,53 @@ to the host.
 
 [tn20k]: https://wiki.sipeed.com/hardware/en/tang/tang-nano-20k/nano-20k.html
 
+## Quick Commands
+
+Build and test the selected Tang Nano 20K FPGA path:
+
+```sh
+make build
+make sim-cocotb-spinal TARGET=tangnano20k SIM=verilator
+make emu-smoke
+```
+
+Build and test the Stratum v1 client:
+
+```sh
+make -C stratum
+make -C stratum test
+make -C stratum smoke-fakes
+```
+
+Run a normal Stratum mining session against a real TangMiner UART device:
+
+```sh
+stratum/build/stratum-client \
+  --host tinyminer.m45core.com \
+  --port 3333 \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
+  --pass x \
+  --serial-port /dev/ttyUSB0 \
+  --fpga-target quick21
+```
+
+Run the software FPGA emulator against the same pool at about `5 kH/s`:
+
+```sh
+python3 stratum/tools/fake_fpga.py --mode hash --max-nonces 100000
+stratum/build/stratum-client \
+  --host tinyminer.m45core.com \
+  --port 3333 \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
+  --pass x \
+  --serial-port /dev/pts/N \
+  --fpga-target quick3 \
+  --suggest-difficulty 0.0000049892
+```
+
+Use `--no-submit` on the Stratum command to validate candidates without sending
+shares to the pool.
+
 ## Current Status
 
 - Default target: Tang Nano 20K (`TARGET=tangnano20k`).
@@ -28,7 +75,8 @@ to the host.
 - Candidate filtering: cheap FPGA-side prefix filters (`quick3`, `quick21`,
   `quick23`, `quick26`) instead of a full 256-bit target comparator.
 - Host contract: rebuild the 80-byte header, double-hash the returned nonce,
-  perform the exact target check, and submit valid shares.
+  perform the exact target check, and submit valid shares with the Stratum
+  nonce byte order.
 
 Tang Nano 9K board files remain in the tree for comparison and simulation, but
 the current four-lane SpinalHDL bitstream is focused on the 20K area and timing

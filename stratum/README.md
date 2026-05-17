@@ -7,21 +7,41 @@ nonces, and submits shares that meet the pool target. The PC CLI uses separate
 network and UART worker threads so the active job can be replaced while the FPGA
 is scanning.
 
-Build on a PC:
+## Quick Start
+
+Build and run the local tests:
 
 ```sh
 make -C stratum
+make -C stratum test
+make -C stratum smoke-fakes
 ```
 
-Run:
+Run a normal mining session against a TangMiner UART device:
 
 ```sh
 stratum/build/stratum-client \
-  --host public-pool.io \
+  --host tinyminer.m45core.com \
   --port 3333 \
-  --user bc1qexample.worker \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
   --pass x \
-  --serial-port /dev/ttyUSB0
+  --serial-port /dev/ttyUSB0 \
+  --fpga-target quick21
+```
+
+Run a software-emulated FPGA session. The hash-mode emulator is slow, about
+`5 kH/s`, so use a low FPGA filter and a low suggested difficulty:
+
+```sh
+python3 stratum/tools/fake_fpga.py --mode hash --max-nonces 100000
+stratum/build/stratum-client \
+  --host tinyminer.m45core.com \
+  --port 3333 \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
+  --pass x \
+  --serial-port /dev/pts/N \
+  --fpga-target quick3 \
+  --suggest-difficulty 0.0000049892
 ```
 
 Useful options:
@@ -35,6 +55,20 @@ Useful options:
 --no-submit               validate candidates but do not submit shares
 --quiet                   only print state changes and jobs
 ```
+
+Add `--no-submit` when testing against a live pool and you only want local
+validation logs.
+
+## Hashrate And Byte Order
+
+The selected Tang Nano 20K gateware runs four lanes at `111 MHz`, modeled as one
+aggregate nonce every `16` fabric clocks, or `6.94 MH/s`.
+
+The FPGA returns `F || nonce[4]` in the byte order inserted into Bitcoin header
+bytes `76..79` for local double-SHA256 validation. Stratum submit uses the
+displayed `uint32` nonce form, so the client byte-swaps the validated FPGA nonce
+only when building `mining.submit`. `extranonce2` is still submitted in the same
+little-endian byte order used in the coinbase.
 
 ## Current Scope
 

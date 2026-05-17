@@ -11,6 +11,50 @@ The C implementation in `stratum/` now covers the first UART mining path. It
 runs standalone on a PC so protocol and hardware work can be tested before
 ESP32 integration.
 
+## Common Commands
+
+```sh
+make -C stratum
+make -C stratum test
+make -C stratum smoke-fakes
+```
+
+Normal UART mining:
+
+```sh
+stratum/build/stratum-client \
+  --host tinyminer.m45core.com \
+  --port 3333 \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
+  --pass x \
+  --serial-port /dev/ttyUSB0 \
+  --fpga-target quick21
+```
+
+Software-emulated mining at about `5 kH/s`:
+
+```sh
+python3 stratum/tools/fake_fpga.py --mode hash --max-nonces 100000
+stratum/build/stratum-client \
+  --host tinyminer.m45core.com \
+  --port 3333 \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
+  --pass x \
+  --serial-port /dev/pts/N \
+  --fpga-target quick3 \
+  --suggest-difficulty 0.0000049892
+```
+
+Use `--no-submit` for live-pool dry runs.
+
+## Nonce Byte Order
+
+The TangMiner UART response nonce is the exact four bytes inserted into header
+bytes `76..79` for local validation. For Stratum `mining.submit`, pools expect
+the displayed 32-bit nonce value, so the PC client byte-swaps the validated FPGA
+nonce only for submit. The `extranonce2` string remains in the little-endian
+byte order used when building the coinbase.
+
 ## Minimal Milestones
 
 1. PC Stratum client logs jobs from a pool. Done.

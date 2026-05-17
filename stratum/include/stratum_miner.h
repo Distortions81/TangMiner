@@ -42,3 +42,4 @@ bool tangminer_build_work(
 bool tangminer_validate_nonce(
     const tangminer_work_t* work, uint32_t nonce, uint8_t hash[32], bool* meets_share, bool* meets_block);
 void tangminer_nonce_to_hex(uint32_t nonce, char out[9]);
+void tangminer_nonce_to_submit_hex(uint32_t nonce, char out[9]);
