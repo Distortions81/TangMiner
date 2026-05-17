@@ -97,6 +97,23 @@ make build-verilog TARGET=tangnano9k
 `build-verilog` uses the legacy hand-written Verilog path. The default `build`
 target uses the SpinalHDL design.
 
+For a smaller production-oriented 20K build, remove UART echo support, remove
+the hardcoded smoke-test job, and fix the FPGA candidate filter to the Stratum
+wrapper's default `quick21` mode:
+
+```sh
+make build TARGET=tangnano20k \
+  SPINAL_ENABLE_ECHO=0 \
+  SPINAL_ENABLE_HARDCODED=0 \
+  SPINAL_FIXED_CANDIDATE=2
+```
+
+`SPINAL_FIXED_CANDIDATE` values are `0` for always report, `1` for `quick3`,
+`2` for `quick21`, `3` for `quick23`, and `4` for `quick26`. Leave it unset
+when you want the FPGA to infer the filter from target aliases in each job.
+The default `SPINAL_SHARED_K=1` shares the SHA-256 round-constant mux between
+the two compression engines in each lane.
+
 Modeled hashrate is:
 
 ```text

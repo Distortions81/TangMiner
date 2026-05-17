@@ -13,13 +13,26 @@ case class GowinClockProfile(
   odivSel: Int = 0
 )
 
+case class TangMinerHardwareOptions(
+  sharedRoundConstant: Boolean = true,
+  enableEcho: Boolean = true,
+  enableHardcodedJob: Boolean = true,
+  fixedCandidateMode: Option[Int] = None
+) {
+  fixedCandidateMode.foreach(mode =>
+    require(mode >= 0 && mode <= 4, s"fixedCandidateMode must be 0..4, got $mode")
+  )
+}
+
 object GowinClockProfiles {
   val Profiles = Map(
     "27m" -> GowinClockProfile("27m", 27.0, 234, usePll = false),
     "90m" -> GowinClockProfile("90m", 90.0, 781, usePll = true, idivSel = 2, fbdivSel = 9, odivSel = 8),
     "100m286" -> GowinClockProfile("100m286", 100.286, 871, usePll = true, idivSel = 6, fbdivSel = 25, odivSel = 8),
     "111m" -> GowinClockProfile("111m", 111.0, 964, usePll = true, idivSel = 8, fbdivSel = 36, odivSel = 8),
-    "120m" -> GowinClockProfile("120m", 120.0, 1042, usePll = true, idivSel = 8, fbdivSel = 39, odivSel = 8)
+    "120m" -> GowinClockProfile("120m", 120.0, 1042, usePll = true, idivSel = 8, fbdivSel = 39, odivSel = 8),
+    "135m" -> GowinClockProfile("135m", 135.0, 1172, usePll = true, idivSel = 1, fbdivSel = 9, odivSel = 8),
+    "150m" -> GowinClockProfile("150m", 150.0, 1302, usePll = true, idivSel = 8, fbdivSel = 49, odivSel = 8)
   )
 
   def byName(name: String): GowinClockProfile =
@@ -275,9 +288,11 @@ class Sha256CompressWords extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
+    val kWord = in UInt(32 bits)
     val stateIn = in Bits(256 bits)
     val words = in Vec(UInt(32 bits), 16)
     val done = out Bool()
+    val roundOut = out UInt(6 bits)
     val workOut = out Bits(256 bits)
   }
 
@@ -287,9 +302,8 @@ class Sha256CompressWords extends Component {
   val round = Reg(UInt(6 bits)) init 0
   val busyReg = Reg(Bool()) init False
 
-  val kVec = Vec(Sha256.K.map(Sha256.word))
   val wNext = (Sha256.smallSigma1(w(14)) + w(9) + Sha256.smallSigma0(w(1)) + w(0)).resize(32)
-  val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + kVec(round) + wRound).resize(32)
+  val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + io.kWord + wRound).resize(32)
   val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
   val aNext = (t1 + t2).resize(32)
   val eNext = (d + t1).resize(32)
@@ -306,6 +320,7 @@ class Sha256CompressWords extends Component {
   ))
 
   io.done := finalRound
+  io.roundOut := round
   io.workOut := finalWork
 
   when(io.reset) {
@@ -370,10 +385,12 @@ class Sha256BitcoinFirstPass extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
+    val kWord = in UInt(32 bits)
     val midstate = in Bits(256 bits)
     val tail = in Bits(96 bits)
     val nonce = in UInt(32 bits)
     val done = out Bool()
+    val round = out UInt(6 bits)
     val digest = out Bits(256 bits)
   }
 
@@ -399,10 +416,12 @@ class Sha256BitcoinFirstPass extends Component {
 
   core.io.reset := io.reset
   core.io.start := io.start
+  core.io.kWord := io.kWord
   core.io.stateIn := io.midstate
   core.io.words := words
 
   io.done := core.io.done
+  io.round := core.io.roundOut
   io.digest := Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
 }
 
@@ -410,9 +429,11 @@ class Sha256BitcoinSecondPass extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
+    val kWord = in UInt(32 bits)
     val firstDigest = in Bits(256 bits)
     val done = out Bool()
-    val digest = out Bits(256 bits)
+    val round = out UInt(6 bits)
+    val digestLow32 = out Bits(32 bits)
   }
 
   val core = new Sha256CompressWords
@@ -438,14 +459,16 @@ class Sha256BitcoinSecondPass extends Component {
 
   core.io.reset := io.reset
   core.io.start := io.start
+  core.io.kWord := io.kWord
   core.io.stateIn := shaIv
   core.io.words := words
 
   io.done := core.io.done
-  io.digest := Sha256Pass.addFeedForward(shaIv, core.io.workOut)
+  io.round := core.io.roundOut
+  io.digestLow32 := (Sha256.word(Sha256.Iv(7)) + Sha256.wordFromDigest(core.io.workOut, 7)).resize(32).asBits
 }
 
-class BitcoinHashCore extends Component {
+class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptions()) extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
@@ -474,7 +497,7 @@ class BitcoinHashCore extends Component {
   val firstNonceReg = Reg(UInt(32 bits)) init 0
   val secondNonceReg = Reg(UInt(32 bits)) init 0
   val checkValidReg = Reg(Bool()) init False
-  val checkDigestReg = Reg(Bits(256 bits)) init 0
+  val checkDigestLow32Reg = Reg(Bits(32 bits)) init 0
   val checkNonceReg = Reg(UInt(32 bits)) init 0
   val checkCandidateModeReg = Reg(UInt(3 bits)) init 3
   val foundNonceReg = Reg(UInt(32 bits)) init 0
@@ -497,31 +520,47 @@ class BitcoinHashCore extends Component {
   shaSecond.io.start := shaSecondStart
   shaSecond.io.firstDigest := shaFirst.io.digest
 
+  val kVec = Vec(Sha256.K.map(Sha256.word))
+  val firstKWord = kVec(shaFirst.io.round)
+  val secondKWord = if (options.sharedRoundConstant) firstKWord else kVec(shaSecond.io.round)
+  shaFirst.io.kWord := firstKWord
+  shaSecond.io.kWord := secondKWord
+
   val candidateAlwaysSelected = checkCandidateModeReg === U(0, 3 bits)
   val quick3TargetSelected = checkCandidateModeReg === U(1, 3 bits)
   val quick21TargetSelected = checkCandidateModeReg === U(2, 3 bits)
   val quick23TargetSelected = checkCandidateModeReg === U(3, 3 bits)
   val quick26TargetSelected = checkCandidateModeReg === U(4, 3 bits)
-  val quick3MeetsTarget = checkDigestReg(7 downto 5) === B(0, 3 bits)
+  val quick3MeetsTarget = checkDigestLow32Reg(7 downto 5) === B(0, 3 bits)
   val quick21MeetsTarget =
-    checkDigestReg(7 downto 0) === B(0, 8 bits) &&
-      checkDigestReg(15 downto 8) === B(0, 8 bits) &&
-      checkDigestReg(23 downto 19) === B(0, 5 bits)
+    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
+      checkDigestLow32Reg(15 downto 8) === B(0, 8 bits) &&
+      checkDigestLow32Reg(23 downto 19) === B(0, 5 bits)
   val quick23MeetsTarget =
-    checkDigestReg(7 downto 0) === B(0, 8 bits) &&
-      checkDigestReg(15 downto 8) === B(0, 8 bits) &&
-      checkDigestReg(23 downto 17) === B(0, 7 bits)
+    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
+      checkDigestLow32Reg(15 downto 8) === B(0, 8 bits) &&
+      checkDigestLow32Reg(23 downto 17) === B(0, 7 bits)
   val quick26MeetsTarget =
-    checkDigestReg(7 downto 0) === B(0, 8 bits) &&
-      checkDigestReg(15 downto 8) === B(0, 8 bits) &&
-      checkDigestReg(23 downto 16) === B(0, 8 bits) &&
-      checkDigestReg(31 downto 30) === B(0, 2 bits)
-  val checkDigestMeetsTarget =
-    candidateAlwaysSelected ||
-      (quick3TargetSelected && quick3MeetsTarget) ||
-      (quick21TargetSelected && quick21MeetsTarget) ||
-      (quick23TargetSelected && quick23MeetsTarget) ||
-      (quick26TargetSelected && quick26MeetsTarget)
+    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
+      checkDigestLow32Reg(15 downto 8) === B(0, 8 bits) &&
+      checkDigestLow32Reg(23 downto 16) === B(0, 8 bits) &&
+      checkDigestLow32Reg(31 downto 30) === B(0, 2 bits)
+  def fixedCandidateMeetsTarget(mode: Int): Bool = mode match {
+    case 0 => True
+    case 1 => quick3MeetsTarget
+    case 2 => quick21MeetsTarget
+    case 3 => quick23MeetsTarget
+    case 4 => quick26MeetsTarget
+  }
+  val checkDigestMeetsTarget = options.fixedCandidateMode match {
+    case Some(mode) => fixedCandidateMeetsTarget(mode)
+    case None =>
+      candidateAlwaysSelected ||
+        (quick3TargetSelected && quick3MeetsTarget) ||
+        (quick21TargetSelected && quick21MeetsTarget) ||
+        (quick23TargetSelected && quick23MeetsTarget) ||
+        (quick26TargetSelected && quick26MeetsTarget)
+  }
 
   io.running := state =/= State.idle && state =/= State.report
   io.found := state === State.report
@@ -536,7 +575,7 @@ class BitcoinHashCore extends Component {
     firstNonceReg := 0
     secondNonceReg := 0
     checkValidReg := False
-    checkDigestReg := 0
+    checkDigestLow32Reg := 0
     checkNonceReg := 0
     checkCandidateModeReg := 3
     foundNonceReg := 0
@@ -581,7 +620,7 @@ class BitcoinHashCore extends Component {
 
             when(shaSecond.io.done) {
               checkValidReg := True
-              checkDigestReg := shaSecond.io.digest
+              checkDigestLow32Reg := shaSecond.io.digestLow32
               checkNonceReg := secondNonceReg
               checkCandidateModeReg := jobCandidateModeReg
             }
@@ -599,7 +638,8 @@ class Top(
   resetCounterBits: Int = 24,
   usePll: Boolean = false,
   laneCount: Int = 4,
-  clockProfile: GowinClockProfile = GowinClockProfiles.byName("111m")
+  clockProfile: GowinClockProfile = GowinClockProfiles.byName("111m"),
+  hardwareOptions: TangMinerHardwareOptions = TangMinerHardwareOptions()
 ) extends Component {
   require(clksPerBit > 1, "clksPerBit must leave room for UART start-bit centering")
   require(resetCounterBits > 0, "resetCounterBits must be positive")
@@ -649,10 +689,12 @@ class Top(
     val CandidateQuick21 = U(2, 3 bits)
     val CandidateQuick23 = U(3, 3 bits)
     val CandidateQuick26 = U(4, 3 bits)
+    val DefaultCandidate = U(hardwareOptions.fixedCandidateMode.getOrElse(3), 3 bits)
     val Quick3Target = B"256'h1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     val Quick21Target = B"256'h000007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     val Quick23Target = B"256'h000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     val Quick26Target = B"256'h0000003fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    val useTargetAliases = hardwareOptions.fixedCandidateMode.isEmpty
 
     val resetCounter = Reg(UInt(resetCounterBits bits)) init 0
     val reset = !systemClockLocked || !resetCounter.msb
@@ -669,7 +711,7 @@ class Top(
     val tx = new UartTx(ClksPerBit)
     tx.io.reset := reset
 
-    val cores = (0 until LaneCount).map(_ => new BitcoinHashCore)
+    val cores = (0 until LaneCount).map(_ => new BitcoinHashCore(hardwareOptions))
     cores.foreach(_.io.reset := reset)
 
     object RxState extends SpinalEnum {
@@ -685,17 +727,17 @@ class Top(
     val command = Reg(Bits(8 bits)) init 0
     val midstate = Reg(Bits(256 bits)) init 0
     val tail = Reg(Bits(96 bits)) init 0
-    val target = Reg(Bits(256 bits)) init 0
-    val targetIsAllOnes = Reg(Bool()) init True
-    val targetIsQuick3 = Reg(Bool()) init False
-    val targetIsQuick21 = Reg(Bool()) init False
-    val targetIsQuick23 = Reg(Bool()) init False
-    val targetIsQuick26 = Reg(Bool()) init False
-    val candidateMode = Reg(UInt(3 bits)) init CandidateQuick23
+    val target = if (hardwareOptions.enableEcho) Reg(Bits(256 bits)) init 0 else B(0, 256 bits)
+    val targetIsAllOnes = if (useTargetAliases) Reg(Bool()) init True else False
+    val targetIsQuick3 = if (useTargetAliases) Reg(Bool()) init False else False
+    val targetIsQuick21 = if (useTargetAliases) Reg(Bool()) init False else False
+    val targetIsQuick23 = if (useTargetAliases) Reg(Bool()) init False else False
+    val targetIsQuick26 = if (useTargetAliases) Reg(Bool()) init False else False
+    val candidateMode = Reg(UInt(3 bits)) init DefaultCandidate
     val coreStart = Reg(Bool()) init False
     val coreStop = Reg(Bool()) init False
     val coreStartPending = Reg(Bool()) init False
-    val echoToggle = Reg(Bool()) init False
+    val echoToggle = if (hardwareOptions.enableEcho) Reg(Bool()) init False else False
 
     for ((core, lane) <- cores.zipWithIndex) {
       core.io.start := coreStart
@@ -729,14 +771,18 @@ class Top(
       coreStartPending := False
       midstate := 0
       tail := 0
-      target := 0
-      targetIsAllOnes := True
-      targetIsQuick3 := False
-      targetIsQuick21 := False
-      targetIsQuick23 := False
-      targetIsQuick26 := False
-      candidateMode := CandidateQuick23
-      echoToggle := False
+      if (hardwareOptions.enableEcho) {
+        target := 0
+        echoToggle := False
+      }
+      if (useTargetAliases) {
+        targetIsAllOnes := True
+        targetIsQuick3 := False
+        targetIsQuick21 := False
+        targetIsQuick23 := False
+        targetIsQuick26 := False
+      }
+      candidateMode := DefaultCandidate
     } otherwise {
       coreStart := False
       coreStop := False
@@ -757,72 +803,109 @@ class Top(
           is(RxState.cmd) {
             command := rx.io.data
             payloadCount := 0
+            val acceptsJobPayload = rx.io.data === B"8'h4a" || (if (hardwareOptions.enableEcho) rx.io.data === B"8'h45" else False)
             when(rx.io.data === B"8'h53") {
               coreStop := True
               rxState := RxState.sync0
-            } elsewhen(rx.io.data === B"8'h48") {
+            } elsewhen((if (hardwareOptions.enableHardcodedJob) rx.io.data === B"8'h48" else False)) {
               midstate := B"256'hbc909a336358bff090ccac7d1e59caa8c3c8d8e94f0103c896b187364719f91b"
               tail := B"96'h4b1e5e4a29ab5f49ffff001d"
-              target := B"256'hffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+              if (hardwareOptions.enableEcho) {
+                target := B"256'hffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+              }
               candidateMode := CandidateAlways
               coreStartPending := True
               rxState := RxState.sync0
-            } elsewhen(rx.io.data === B"8'h4a" || rx.io.data === B"8'h45") {
-              targetIsAllOnes := True
-              targetIsQuick3 := True
-              targetIsQuick21 := True
-              targetIsQuick23 := True
-              targetIsQuick26 := True
+            } elsewhen(acceptsJobPayload) {
+              if (useTargetAliases) {
+                targetIsAllOnes := True
+                targetIsQuick3 := True
+                targetIsQuick21 := True
+                targetIsQuick23 := True
+                targetIsQuick26 := True
+              }
               rxState := RxState.payload
             } otherwise {
               rxState := RxState.sync0
             }
           }
           is(RxState.payload) {
-            val targetByteIndex = (payloadCount - U(44, 7 bits)).resize(5)
-            val targetMatchesAllOnes = rx.io.data === B"8'hff"
-            val targetMatchesQuick3 = rx.io.data === Sha256.byteFromMsb(Quick3Target, 32, targetByteIndex)
-            val targetMatchesQuick21 = rx.io.data === Sha256.byteFromMsb(Quick21Target, 32, targetByteIndex)
-            val targetMatchesQuick23 = rx.io.data === Sha256.byteFromMsb(Quick23Target, 32, targetByteIndex)
-            val targetMatchesQuick26 = rx.io.data === Sha256.byteFromMsb(Quick26Target, 32, targetByteIndex)
-            val nextTargetIsAllOnes = targetIsAllOnes && targetMatchesAllOnes
-            val nextTargetIsQuick3 = targetIsQuick3 && targetMatchesQuick3
-            val nextTargetIsQuick21 = targetIsQuick21 && targetMatchesQuick21
-            val nextTargetIsQuick23 = targetIsQuick23 && targetMatchesQuick23
-            val nextTargetIsQuick26 = targetIsQuick26 && targetMatchesQuick26
+            if (useTargetAliases) {
+              val targetByteIndex = (payloadCount - U(44, 7 bits)).resize(5)
+              val targetMatchesAllOnes = rx.io.data === B"8'hff"
+              val targetMatchesQuick3 = rx.io.data === Sha256.byteFromMsb(Quick3Target, 32, targetByteIndex)
+              val targetMatchesQuick21 = rx.io.data === Sha256.byteFromMsb(Quick21Target, 32, targetByteIndex)
+              val targetMatchesQuick23 = rx.io.data === Sha256.byteFromMsb(Quick23Target, 32, targetByteIndex)
+              val targetMatchesQuick26 = rx.io.data === Sha256.byteFromMsb(Quick26Target, 32, targetByteIndex)
+              val nextTargetIsAllOnes = targetIsAllOnes && targetMatchesAllOnes
+              val nextTargetIsQuick3 = targetIsQuick3 && targetMatchesQuick3
+              val nextTargetIsQuick21 = targetIsQuick21 && targetMatchesQuick21
+              val nextTargetIsQuick23 = targetIsQuick23 && targetMatchesQuick23
+              val nextTargetIsQuick26 = targetIsQuick26 && targetMatchesQuick26
 
-            when(payloadCount < 32) {
-              midstate := midstate(247 downto 0) ## rx.io.data
-            } elsewhen(payloadCount < 44) {
-              tail := tail(87 downto 0) ## rx.io.data
-            } elsewhen(payloadCount < 76) {
-              target := target(247 downto 0) ## rx.io.data
-              targetIsAllOnes := nextTargetIsAllOnes
-              targetIsQuick3 := nextTargetIsQuick3
-              targetIsQuick21 := nextTargetIsQuick21
-              targetIsQuick23 := nextTargetIsQuick23
-              targetIsQuick26 := nextTargetIsQuick26
-            }
-
-            when(payloadCount === JobBytes - 1) {
-              when(command === B"8'h4a") {
-                candidateMode := CandidateQuick23
-                when(nextTargetIsAllOnes) {
-                  candidateMode := CandidateAlways
-                } elsewhen(nextTargetIsQuick3) {
-                  candidateMode := CandidateQuick3
-                } elsewhen(nextTargetIsQuick21) {
-                  candidateMode := CandidateQuick21
-                } elsewhen(nextTargetIsQuick26) {
-                  candidateMode := CandidateQuick26
+              when(payloadCount < 32) {
+                midstate := midstate(247 downto 0) ## rx.io.data
+              } elsewhen(payloadCount < 44) {
+                tail := tail(87 downto 0) ## rx.io.data
+              } elsewhen(payloadCount < 76) {
+                if (hardwareOptions.enableEcho) {
+                  target := target(247 downto 0) ## rx.io.data
                 }
-                coreStartPending := True
-              } elsewhen(command === B"8'h45") {
-                echoToggle := !echoToggle
+                targetIsAllOnes := nextTargetIsAllOnes
+                targetIsQuick3 := nextTargetIsQuick3
+                targetIsQuick21 := nextTargetIsQuick21
+                targetIsQuick23 := nextTargetIsQuick23
+                targetIsQuick26 := nextTargetIsQuick26
               }
-              rxState := RxState.sync0
-            } otherwise {
-              payloadCount := payloadCount + 1
+
+              when(payloadCount === JobBytes - 1) {
+                when(command === B"8'h4a") {
+                  candidateMode := CandidateQuick23
+                  when(nextTargetIsAllOnes) {
+                    candidateMode := CandidateAlways
+                  } elsewhen(nextTargetIsQuick3) {
+                    candidateMode := CandidateQuick3
+                  } elsewhen(nextTargetIsQuick21) {
+                    candidateMode := CandidateQuick21
+                  } elsewhen(nextTargetIsQuick26) {
+                    candidateMode := CandidateQuick26
+                  }
+                  coreStartPending := True
+                }
+                if (hardwareOptions.enableEcho) {
+                  when(command === B"8'h45") {
+                    echoToggle := !echoToggle
+                  }
+                }
+                rxState := RxState.sync0
+              } otherwise {
+                payloadCount := payloadCount + 1
+              }
+            } else {
+              when(payloadCount < 32) {
+                midstate := midstate(247 downto 0) ## rx.io.data
+              } elsewhen(payloadCount < 44) {
+                tail := tail(87 downto 0) ## rx.io.data
+              } elsewhen(payloadCount < 76) {
+                if (hardwareOptions.enableEcho) {
+                  target := target(247 downto 0) ## rx.io.data
+                }
+              }
+
+              when(payloadCount === JobBytes - 1) {
+                when(command === B"8'h4a") {
+                  candidateMode := DefaultCandidate
+                  coreStartPending := True
+                }
+                if (hardwareOptions.enableEcho) {
+                  when(command === B"8'h45") {
+                    echoToggle := !echoToggle
+                  }
+                }
+                rxState := RxState.sync0
+              } otherwise {
+                payloadCount := payloadCount + 1
+              }
             }
           }
         }
@@ -835,21 +918,13 @@ class Top(
       bytes(index.resized)
     }
 
-    def echoResponseByte(index: UInt): Bits = {
-      val midstateBytes = (0 until 32).map(i => midstate(255 - i * 8 downto 248 - i * 8))
-      val tailBytes = (0 until 12).map(i => tail(95 - i * 8 downto 88 - i * 8))
-      val targetBytes = (0 until 32).map(i => target(255 - i * 8 downto 248 - i * 8))
-      val bytes = Vec(Seq(B"8'h45") ++ midstateBytes ++ tailBytes ++ targetBytes)
-      bytes(index.resized)
-    }
-
     val txState = Reg(TxState()) init TxState.idle
     val txIndex = Reg(UInt(7 bits)) init 0
     val txStart = Reg(Bool()) init False
     val txData = Reg(Bits(8 bits)) init B"8'hff"
     val foundSeen = Reg(Bool()) init False
-    val echoSeenToggle = Reg(Bool()) init False
-    val txEcho = Reg(Bool()) init False
+    val echoSeenToggle = if (hardwareOptions.enableEcho) Reg(Bool()) init False else False
+    val txEcho = if (hardwareOptions.enableEcho) Reg(Bool()) init False else False
     val txFoundNonce = Reg(UInt(32 bits)) init 0
 
     tx.io.start := txStart
@@ -862,8 +937,10 @@ class Top(
       txStart := False
       txData := B"8'hff"
       foundSeen := False
-      echoSeenToggle := False
-      txEcho := False
+      if (hardwareOptions.enableEcho) {
+        echoSeenToggle := False
+        txEcho := False
+      }
       txFoundNonce := 0
     } otherwise {
       txStart := False
@@ -874,29 +951,51 @@ class Top(
 
       switch(txState) {
         is(TxState.idle) {
-          when(echoSeenToggle =/= echoToggle) {
-            txIndex := 0
-            txEcho := True
-            txState := TxState.send
-            echoSeenToggle := echoToggle
-          } elsewhen(foundAny && !foundSeen) {
-            txIndex := 0
-            txEcho := False
-            txFoundNonce := selectedFoundNonce
-            txState := TxState.send
-            foundSeen := True
+          if (hardwareOptions.enableEcho) {
+            when(echoSeenToggle =/= echoToggle) {
+              txIndex := 0
+              txEcho := True
+              txState := TxState.send
+              echoSeenToggle := echoToggle
+            } elsewhen(foundAny && !foundSeen) {
+              txIndex := 0
+              txEcho := False
+              txFoundNonce := selectedFoundNonce
+              txState := TxState.send
+              foundSeen := True
+            }
+          } else {
+            when(foundAny && !foundSeen) {
+              txIndex := 0
+              txFoundNonce := selectedFoundNonce
+              txState := TxState.send
+              foundSeen := True
+            }
           }
         }
         is(TxState.send) {
           when(!tx.io.busy) {
-            txData := Mux(txEcho, echoResponseByte(txIndex), foundResponseByte(txIndex, txFoundNonce))
+            if (hardwareOptions.enableEcho) {
+              val midstateBytes = (0 until 32).map(i => midstate(255 - i * 8 downto 248 - i * 8))
+              val tailBytes = (0 until 12).map(i => tail(95 - i * 8 downto 88 - i * 8))
+              val targetBytes = (0 until 32).map(i => target(255 - i * 8 downto 248 - i * 8))
+              val echoBytes = Vec(Seq(B"8'h45") ++ midstateBytes ++ tailBytes ++ targetBytes)
+              txData := Mux(txEcho, echoBytes(txIndex.resized), foundResponseByte(txIndex, txFoundNonce))
+            } else {
+              txData := foundResponseByte(txIndex, txFoundNonce)
+            }
             txStart := True
             txState := TxState.waitBusy
           }
         }
         is(TxState.waitBusy) {
           when(tx.io.busy) {
-            when((!txEcho && txIndex === FoundRespBytes - 1) || (txEcho && txIndex === EchoRespBytes - 1)) {
+            val responseDone = if (hardwareOptions.enableEcho) {
+              (!txEcho && txIndex === FoundRespBytes - 1) || (txEcho && txIndex === EchoRespBytes - 1)
+            } else {
+              txIndex === FoundRespBytes - 1
+            }
+            when(responseDone) {
               txState := TxState.idle
             } otherwise {
               txIndex := txIndex + 1
@@ -929,27 +1028,60 @@ object GenerateVerilog extends App {
   def envInt(names: Seq[String], default: Int): Int =
     names.collectFirst(Function.unlift(sys.env.get)).map(_.toInt).getOrElse(default)
 
+  def envOptionalInt(names: Seq[String]): Option[Int] =
+    names.collectFirst(Function.unlift(sys.env.get)).filter(_.nonEmpty).map(_.toInt)
+
   val targetDirectory = sys.env.getOrElse("TANGMINER_VERILOG_DIR", "build/spinal")
   val usePll = envBoolean("TANGMINER_USE_PLL", default = false)
   val clockProfile = GowinClockProfiles.byName(envString(Seq("TANGMINER_CLOCK_PROFILE", "SPINAL_CLOCK_PROFILE"), "111m"))
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), clockProfile.clksPerBit)
   val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 4)
+  val hardwareOptions = TangMinerHardwareOptions(
+    sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
+    enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = true),
+    enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = true),
+    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"))
+  )
 
   SpinalConfig(
     targetDirectory = targetDirectory,
     defaultConfigForClockDomains = ClockDomainConfig(resetKind = BOOT)
-  ).generateVerilog(new Top(clksPerBit = clksPerBit, usePll = usePll, laneCount = laneCount, clockProfile = clockProfile))
+  ).generateVerilog(new Top(
+    clksPerBit = clksPerBit,
+    usePll = usePll,
+    laneCount = laneCount,
+    clockProfile = clockProfile,
+    hardwareOptions = hardwareOptions
+  ))
 }
 
 object GenerateSimVerilog extends App {
+  def envBoolean(name: String, default: Boolean): Boolean =
+    sys.env.get(name).map(value => value == "1" || value.equalsIgnoreCase("true")).getOrElse(default)
+
   def envInt(names: Seq[String], default: Int): Int =
     names.collectFirst(Function.unlift(sys.env.get)).map(_.toInt).getOrElse(default)
 
+  def envOptionalInt(names: Seq[String]): Option[Int] =
+    names.collectFirst(Function.unlift(sys.env.get)).filter(_.nonEmpty).map(_.toInt)
+
   val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 4)
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), 8)
+  val hardwareOptions = TangMinerHardwareOptions(
+    sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
+    enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = true),
+    enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = true),
+    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"))
+  )
 
   SpinalConfig(
     targetDirectory = "build/spinal-sim",
     defaultConfigForClockDomains = ClockDomainConfig(resetKind = BOOT)
-  ).generateVerilog(new Top(clksPerBit = clksPerBit, resetCounterBits = 4, laneCount = laneCount, clockProfile = GowinClockProfiles.byName("27m")))
+  ).generateVerilog(new Top(
+    clksPerBit = clksPerBit,
+    resetCounterBits = 4,
+    laneCount = laneCount,
+    clockProfile = GowinClockProfiles.byName("27m"),
+    hardwareOptions = hardwareOptions
+  ))
 }

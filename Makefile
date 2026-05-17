@@ -33,8 +33,14 @@ SPINAL_CLKS_PER_BIT ?= 964
 else ifeq ($(SPINAL_CLOCK_PROFILE),120m)
 SPINAL_CLOCK_MHZ ?= 120.000
 SPINAL_CLKS_PER_BIT ?= 1042
+else ifeq ($(SPINAL_CLOCK_PROFILE),135m)
+SPINAL_CLOCK_MHZ ?= 135.000
+SPINAL_CLKS_PER_BIT ?= 1172
+else ifeq ($(SPINAL_CLOCK_PROFILE),150m)
+SPINAL_CLOCK_MHZ ?= 150.000
+SPINAL_CLKS_PER_BIT ?= 1302
 else
-$(error Unsupported SPINAL_CLOCK_PROFILE '$(SPINAL_CLOCK_PROFILE)'. Use 27m, 90m, 100m286, 111m, or 120m)
+$(error Unsupported SPINAL_CLOCK_PROFILE '$(SPINAL_CLOCK_PROFILE)'. Use 27m, 90m, 100m286, 111m, 120m, 135m, or 150m)
 endif
 
 ifeq ($(TARGET),tangnano9k)
@@ -44,6 +50,10 @@ endif
 endif
 
 SPINAL_LANES ?= 4
+SPINAL_SHARED_K ?= 1
+SPINAL_ENABLE_ECHO ?= 1
+SPINAL_ENABLE_HARDCODED ?= 1
+SPINAL_FIXED_CANDIDATE ?=
 TOP := top
 BUILD := build
 SRC := src/top.v src/uart_rx.v src/uart_tx.v src/bitcoin_hash_core.v src/sha256_compress.v
@@ -103,6 +113,10 @@ $(SPINAL_CONFIG): FORCE | $(BUILD)/.dir
 	  echo "clock_mhz=$(SPINAL_CLOCK_MHZ)"; \
 	  echo "use_pll=$(SPINAL_USE_PLL)"; \
 	  echo "clks_per_bit=$(SPINAL_CLKS_PER_BIT)"; \
+	  echo "shared_k=$(SPINAL_SHARED_K)"; \
+	  echo "enable_echo=$(SPINAL_ENABLE_ECHO)"; \
+	  echo "enable_hardcoded=$(SPINAL_ENABLE_HARDCODED)"; \
+	  echo "fixed_candidate=$(SPINAL_FIXED_CANDIDATE)"; \
 	} > "$$tmp"; \
 	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm "$$tmp"; fi
 
@@ -112,15 +126,19 @@ $(SPINAL_SIM_CONFIG): FORCE | $(BUILD)/.dir
 	{ \
 	  echo "lanes=$(SPINAL_LANES)"; \
 	  echo "clks_per_bit=8"; \
+	  echo "shared_k=$(SPINAL_SHARED_K)"; \
+	  echo "enable_echo=$(SPINAL_ENABLE_ECHO)"; \
+	  echo "enable_hardcoded=$(SPINAL_ENABLE_HARDCODED)"; \
+	  echo "fixed_candidate=$(SPINAL_FIXED_CANDIDATE)"; \
 	} > "$$tmp"; \
 	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm "$$tmp"; fi
 
 $(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_CONFIG) | $(BUILD)/.dir
 	mkdir -p $(SPINAL_DIR)
-	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) $(SBT) "runMain tangminer.GenerateVerilog"
+	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateVerilog"
 
 $(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_SIM_CONFIG) | $(BUILD)/.dir
-	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 $(SBT) "runMain tangminer.GenerateSimVerilog"
+	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateSimVerilog"
 
 $(VERILOG_PREFIX).json: $(SRC) | $(BUILD)/.dir
 	$(YOSYS) -p "read_verilog $(SRC); synth_gowin -top $(TOP) -json $@"

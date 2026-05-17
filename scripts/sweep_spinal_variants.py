@@ -20,6 +20,8 @@ PROFILE_CLOCK_MHZ = {
     "100m286": 100.286,
     "111m": 111.000,
     "120m": 120.000,
+    "135m": 135.000,
+    "150m": 150.000,
 }
 UTIL_LIMITS = {
     "LUT4": 85,
@@ -96,6 +98,7 @@ def build_variant(args, lanes, profile):
         f"SPINAL_CLOCK_PROFILE={profile}",
         f"BUILD={args.build_root}/{variant}",
     ]
+    cmd.extend(args.make_var)
     if args.dry_run:
         print(" ".join(cmd))
         return result
@@ -291,6 +294,13 @@ def main():
     parser.add_argument("--build-root", default="build/sweep", help="ignored build directory for variant outputs")
     parser.add_argument("--dry-run", action="store_true", help="print make commands without running them")
     parser.add_argument("--json", dest="json_path", help="write machine-readable result JSON")
+    parser.add_argument(
+        "--make-var",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="extra make variable for every variant, repeatable",
+    )
     parser.add_argument(
         "--variant-timeout-seconds",
         type=int,
