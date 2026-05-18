@@ -39,7 +39,7 @@ The SpinalHDL cocotb run should include a `source=rtl_cycles` hashrate line.
 For the current 20K model, the expected rate is:
 
 ```text
-111,000,000 Hz / 16 clocks per aggregate nonce = 6.94 MH/s
+111,000,000 Hz / 15.25 clocks per aggregate nonce = 7.28 MH/s
 ```
 
 ## 3. Build The Bitstream

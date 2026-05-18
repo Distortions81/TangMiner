@@ -100,7 +100,7 @@
   <text class="tiny" x="764" y="338">candidate nonce returns over the same UART link</text>
 
   <rect class="note" x="1200" y="115" width="514" height="44"/>
-  <text class="small" x="1222" y="143">20K default: 4 lanes at 111 MHz = about 6.94 MH/s</text>
+  <text class="small" x="1222" y="143">20K default: 4 lanes at 111 MHz = about 7.28 MH/s</text>
 
   <rect class="panelTint" x="36" y="390" width="1728" height="438"/>
   <text class="panelTitle" x="60" y="422">2. Detailed Block Diagram Of Modules</text>
@@ -155,7 +155,7 @@
 
   <rect class="sha" x="948" y="518" width="160" height="94"/>
   <text class="label" x="977" y="549">Compress A</text>
-  <text class="small" x="984" y="573">64 rounds</text>
+  <text class="small" x="984" y="573">61 rounds</text>
   <text class="tiny" x="974" y="594">header final block</text>
 
   <rect class="box" x="1138" y="532" width="104" height="72"/>
@@ -168,7 +168,7 @@
 
   <rect class="sha" x="948" y="654" width="160" height="94"/>
   <text class="label" x="977" y="685">Compress B</text>
-  <text class="small" x="984" y="709">64 rounds</text>
+  <text class="small" x="984" y="709">61 rounds</text>
   <text class="tiny" x="980" y="730">second SHA pass</text>
 
   <rect class="check" x="1138" y="668" width="104" height="72"/>
@@ -201,7 +201,7 @@
   <path class="arrowGreenThin" d="M 1468 546 L 1480 546"/>
   <path class="arrowGreenThin" d="M 1468 630 L 1480 630"/>
   <text class="small" x="1322" y="697">Two compressors keep the lane full.</text>
-  <text class="small" x="1322" y="721">After fill, one nonce completes every 64 clocks.</text>
+  <text class="small" x="1322" y="721">After fill, one nonce completes every 61 clocks.</text>
   <text class="metric" x="1322" y="748">There is little idle hardware in a lane.</text>
 
   <path class="arrow" d="M 474 688 C 512 688 514 628 536 628"/>

@@ -30,10 +30,12 @@ Keep the FPGA simple:
 - Mujina owns Bitcoin wire-format conversion, compact target expansion,
   host-side double hashing, exact target comparison, and pool share formatting.
 
-The current 20K bitstream starts four lanes at nonce words `0`, `1`, `2`, and
-`3`; each lane then advances by `4`. Mujina should treat returned nonce bytes as
-header wire order, copy them into header bytes `76..79`, and then let its normal
-block-hash path decide whether the share is valid.
+The default 20K bitstream starts four single-pair lanes at nonce words `0`,
+`1`, `2`, and `3`; each lane then advances by `4`. Experimental paired lanes
+keep neighboring nonce residues inside one wider lane wrapper, but the host
+contract is unchanged. Mujina should treat returned nonce bytes as header wire
+order, copy them into header bytes `76..79`, and then let its normal block-hash
+path decide whether the share is valid.
 
 ## First Useful Milestone
 

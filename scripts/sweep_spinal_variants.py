@@ -32,6 +32,9 @@ UTIL_LIMITS = {
 @dataclass
 class SweepResult:
     lanes: int
+    pairs_per_lane: int
+    round_skip: int
+    rounds_per_nonce: int
     profile: str
     clock_mhz: float
     modeled_hps: float
@@ -61,6 +64,21 @@ def parse_csv_strings(value):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def parse_csv_round_skip(value):
+    values = []
+    for item in value.split(","):
+        item = item.strip().lower()
+        if not item:
+            continue
+        if item in ("1", "true", "yes", "on"):
+            values.append(1)
+        elif item in ("0", "false", "no", "off"):
+            values.append(0)
+        else:
+            raise SystemExit(f"unsupported round-skip value: {item}")
+    return values
+
+
 def tool_defaults():
     env = os.environ.copy()
     local_sbt = REPO_ROOT / "local" / "sbt" / "bin" / "sbt"
@@ -72,16 +90,20 @@ def tool_defaults():
     return env
 
 
-def build_variant(args, lanes, profile):
+def build_variant(args, lanes, pairs_per_lane, round_skip, profile):
     clock_mhz = PROFILE_CLOCK_MHZ[profile]
-    variant = f"lanes{lanes}_{profile}"
+    rounds_per_nonce = 61 if round_skip else 64
+    variant = f"lanes{lanes}_pairs{pairs_per_lane}_skip{round_skip}_{profile}"
     build_dir = REPO_ROOT / args.build_root / variant
     build_dir.mkdir(parents=True, exist_ok=True)
     log_path = build_dir / "build.log"
-    modeled_hps = clock_mhz * 1_000_000.0 * lanes / 64.0
+    modeled_hps = clock_mhz * 1_000_000.0 * lanes * pairs_per_lane / float(rounds_per_nonce)
 
     result = SweepResult(
         lanes=lanes,
+        pairs_per_lane=pairs_per_lane,
+        round_skip=round_skip,
+        rounds_per_nonce=rounds_per_nonce,
         profile=profile,
         clock_mhz=clock_mhz,
         modeled_hps=modeled_hps,
@@ -95,6 +117,8 @@ def build_variant(args, lanes, profile):
         "build-spinal",
         "TARGET=tangnano20k",
         f"SPINAL_LANES={lanes}",
+        f"SPINAL_PAIRS_PER_LANE={pairs_per_lane}",
+        f"SPINAL_ROUND_SKIP={round_skip}",
         f"SPINAL_CLOCK_PROFILE={profile}",
         f"BUILD={args.build_root}/{variant}",
     ]
@@ -105,7 +129,10 @@ def build_variant(args, lanes, profile):
 
     env = tool_defaults()
     timeout_seconds = args.variant_timeout_seconds
-    print(f"\n==> lanes={lanes} profile={profile} clock={clock_mhz:.3f}MHz")
+    print(
+        f"\n==> lanes={lanes} pairs_per_lane={pairs_per_lane} "
+        f"round_skip={round_skip} profile={profile} clock={clock_mhz:.3f}MHz"
+    )
     print(f"    log: {log_path.relative_to(REPO_ROOT)}")
     start_time = time.monotonic()
     timed_out = False
@@ -263,13 +290,14 @@ def format_rate(hps):
 
 
 def print_table(results):
-    print("| lanes | clock | modeled | timing | fmax | margin | LUT4 | DFF | BSRAM | route | elapsed | ok | reason | log |")
-    print("| ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |")
+    print("| lanes | pairs | skip | rounds | clock | modeled | timing | fmax | margin | LUT4 | DFF | BSRAM | route | elapsed | ok | reason | log |")
+    print("| ---: | ---: | ---: | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |")
     for item in sorted(results, key=lambda r: (r.selected_ok, r.modeled_hps), reverse=True):
         bsram = f"{item.bsram_used}/{item.bsram_total}" if item.bsram_total else "0/0"
         route_time = f"{item.route_time_seconds:.1f}s" if item.route_time_seconds else "-"
         print(
-            f"| {item.lanes} | {item.profile} | {format_rate(item.modeled_hps)} | "
+            f"| {item.lanes} | {item.pairs_per_lane} | {item.round_skip} | {item.rounds_per_nonce} | "
+            f"{item.profile} | {format_rate(item.modeled_hps)} | "
             f"{item.timing_status} | {item.fmax_mhz:.2f} | {item.margin_percent:.1f}% | "
             f"{item.lut4_percent}% | {item.dff_percent}% | {bsram} | {route_time} | "
             f"{item.elapsed_seconds:.1f}s | {'yes' if item.selected_ok else 'no'} | "
@@ -282,7 +310,7 @@ def print_table(results):
         print()
         print(
             "Best passing variant: "
-            f"lanes={best.lanes} profile={best.profile} "
+            f"lanes={best.lanes} pairs_per_lane={best.pairs_per_lane} round_skip={best.round_skip} profile={best.profile} "
             f"modeled={format_rate(best.modeled_hps)} fmax={best.fmax_mhz:.2f}MHz"
         )
 
@@ -290,6 +318,8 @@ def print_table(results):
 def main():
     parser = argparse.ArgumentParser(description="Build and rank TangMiner SpinalHDL lane/clock variants")
     parser.add_argument("--lanes", default=",".join(str(v) for v in DEFAULT_LANES), help="comma-separated lane counts")
+    parser.add_argument("--pairs-per-lane", default="1", help="comma-separated A/B compressor pair counts per top-level lane")
+    parser.add_argument("--round-skip", default="1", help="comma-separated 61-cycle round-skip settings, 1 enabled or 0 full 64-round")
     parser.add_argument("--profiles", default=",".join(DEFAULT_PROFILES), help="comma-separated clock profiles")
     parser.add_argument("--build-root", default="build/sweep", help="ignored build directory for variant outputs")
     parser.add_argument("--dry-run", action="store_true", help="print make commands without running them")
@@ -310,6 +340,8 @@ def main():
     args = parser.parse_args()
 
     lanes = parse_csv_ints(args.lanes)
+    pairs_per_lane_values = parse_csv_ints(args.pairs_per_lane)
+    round_skip_values = parse_csv_round_skip(args.round_skip)
     profiles = parse_csv_strings(args.profiles)
     unknown_profiles = [profile for profile in profiles if profile not in PROFILE_CLOCK_MHZ]
     if unknown_profiles:
@@ -319,8 +351,12 @@ def main():
     for lane_count in lanes:
         if lane_count <= 0:
             raise SystemExit("lane counts must be positive")
-        for profile in profiles:
-            results.append(build_variant(args, lane_count, profile))
+        for pairs_per_lane in pairs_per_lane_values:
+            if pairs_per_lane <= 0:
+                raise SystemExit("pairs per lane values must be positive")
+            for round_skip in round_skip_values:
+                for profile in profiles:
+                    results.append(build_variant(args, lane_count, pairs_per_lane, round_skip, profile))
 
     print_table(results)
 

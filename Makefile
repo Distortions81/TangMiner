@@ -50,7 +50,8 @@ endif
 endif
 
 SPINAL_LANES ?= 4
-SPINAL_SHARED_K ?= 1
+SPINAL_PAIRS_PER_LANE ?= 1
+SPINAL_ROUND_SKIP ?= 1
 SPINAL_ENABLE_ECHO ?= 1
 SPINAL_ENABLE_HARDCODED ?= 1
 SPINAL_FIXED_CANDIDATE ?=
@@ -68,6 +69,7 @@ OSS_CAD_SUITE ?= $(HOME)/oss-cad-suite
 TOOLBIN := $(OSS_CAD_SUITE)/bin
 YOSYS := $(TOOLBIN)/yosys
 NEXTPNR := $(TOOLBIN)/nextpnr-himbaechel
+NEXTPNR_ARGS ?=
 GOWIN_PACK := $(TOOLBIN)/gowin_pack
 OPENFPGALOADER := $(TOOLBIN)/openFPGALoader
 IVERILOG := $(TOOLBIN)/iverilog
@@ -81,7 +83,9 @@ EMU_ARGS ?=
 MINE_ARGS ?=
 SWEEP_ARGS ?=
 SPINAL_CLOCK_HZ ?= $(shell $(PYTHON) -c 'print(int(round(float("$(SPINAL_CLOCK_MHZ)") * 1000000)))')
-SPINAL_CYCLES_PER_NONCE ?= $(shell $(PYTHON) -c 'print(64.0 / float("$(SPINAL_LANES)"))')
+SPINAL_TOTAL_PAIRS ?= $(shell $(PYTHON) -c 'print(int("$(SPINAL_LANES)") * int("$(SPINAL_PAIRS_PER_LANE)"))')
+SPINAL_ROUNDS_PER_NONCE ?= $(shell $(PYTHON) -c 'print(61 if str("$(SPINAL_ROUND_SKIP)").lower() not in ("0", "false", "no", "off") else 64)')
+SPINAL_CYCLES_PER_NONCE ?= $(shell $(PYTHON) -c 'print(float("$(SPINAL_ROUNDS_PER_NONCE)") / float("$(SPINAL_TOTAL_PAIRS)"))')
 
 .PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal sweep-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine stratum-client stratum-test stratum-mine-software stratum-mine-hardware check-cocotb sim-cocotb sim-cocotb-spinal FORCE
 
@@ -109,11 +113,12 @@ $(SPINAL_CONFIG): FORCE | $(BUILD)/.dir
 	{ \
 	  echo "target=$(TARGET)"; \
 	  echo "lanes=$(SPINAL_LANES)"; \
+	  echo "pairs_per_lane=$(SPINAL_PAIRS_PER_LANE)"; \
+	  echo "round_skip=$(SPINAL_ROUND_SKIP)"; \
 	  echo "clock_profile=$(SPINAL_CLOCK_PROFILE)"; \
 	  echo "clock_mhz=$(SPINAL_CLOCK_MHZ)"; \
 	  echo "use_pll=$(SPINAL_USE_PLL)"; \
 	  echo "clks_per_bit=$(SPINAL_CLKS_PER_BIT)"; \
-	  echo "shared_k=$(SPINAL_SHARED_K)"; \
 	  echo "enable_echo=$(SPINAL_ENABLE_ECHO)"; \
 	  echo "enable_hardcoded=$(SPINAL_ENABLE_HARDCODED)"; \
 	  echo "fixed_candidate=$(SPINAL_FIXED_CANDIDATE)"; \
@@ -125,8 +130,9 @@ $(SPINAL_SIM_CONFIG): FORCE | $(BUILD)/.dir
 	@tmp="$@.tmp"; \
 	{ \
 	  echo "lanes=$(SPINAL_LANES)"; \
+	  echo "pairs_per_lane=$(SPINAL_PAIRS_PER_LANE)"; \
+	  echo "round_skip=$(SPINAL_ROUND_SKIP)"; \
 	  echo "clks_per_bit=8"; \
-	  echo "shared_k=$(SPINAL_SHARED_K)"; \
 	  echo "enable_echo=$(SPINAL_ENABLE_ECHO)"; \
 	  echo "enable_hardcoded=$(SPINAL_ENABLE_HARDCODED)"; \
 	  echo "fixed_candidate=$(SPINAL_FIXED_CANDIDATE)"; \
@@ -135,10 +141,10 @@ $(SPINAL_SIM_CONFIG): FORCE | $(BUILD)/.dir
 
 $(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_CONFIG) | $(BUILD)/.dir
 	mkdir -p $(SPINAL_DIR)
-	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateVerilog"
+	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_PAIRS_PER_LANE=$(SPINAL_PAIRS_PER_LANE) TANGMINER_ROUND_SKIP=$(SPINAL_ROUND_SKIP) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateVerilog"
 
 $(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_SIM_CONFIG) | $(BUILD)/.dir
-	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateSimVerilog"
+	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_PAIRS_PER_LANE=$(SPINAL_PAIRS_PER_LANE) TANGMINER_ROUND_SKIP=$(SPINAL_ROUND_SKIP) TANGMINER_CLKS_PER_BIT=8 TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateSimVerilog"
 
 $(VERILOG_PREFIX).json: $(SRC) | $(BUILD)/.dir
 	$(YOSYS) -p "read_verilog $(SRC); synth_gowin -top $(TOP) -json $@"
@@ -153,7 +159,7 @@ $(SPINAL_PREFIX).json: $(SPINAL_SRC) | $(BUILD)/.dir
 	$(YOSYS) -p "read_verilog $(SPINAL_SRC); synth_gowin -top $(TOP) -json $@"
 
 $(SPINAL_PREFIX)_pnr.json: $(SPINAL_PREFIX).json $(CST)
-	$(NEXTPNR) --json $< --write $@ --freq $(SPINAL_CLOCK_MHZ) --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST)
+	$(NEXTPNR) --json $< --write $@ --freq $(SPINAL_CLOCK_MHZ) --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST) $(NEXTPNR_ARGS)
 
 $(SPINAL_PREFIX).fs: $(SPINAL_PREFIX)_pnr.json
 	$(GOWIN_PACK) -d $(FAMILY) -o $@ $<
@@ -230,7 +236,7 @@ sim-cocotb: check-cocotb
 	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))"
 
 sim-cocotb-spinal: $(SPINAL_SIM_SRC) check-cocotb
-	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))" RTL_SOURCES="$(abspath $(SPINAL_SIM_SRC))" EXTRA_COMPILE_ARGS= CLKS_PER_BIT=8 LANE_COUNT=$(SPINAL_LANES) HARDWARE_CLOCK_HZ=$(SPINAL_CLOCK_HZ)
+	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))" RTL_SOURCES="$(abspath $(SPINAL_SIM_SRC))" EXTRA_COMPILE_ARGS= CLKS_PER_BIT=8 LANE_COUNT=$(SPINAL_TOTAL_PAIRS) HARDWARE_CLOCK_HZ=$(SPINAL_CLOCK_HZ)
 
 clean:
 	rm -rf $(BUILD)

@@ -18,8 +18,9 @@ pool work, full double-SHA256 validation, target checks, and share submission.
   `SPINAL_LANES=1` or `SPINAL_LANES=2`.
 
 `TARGET` selects the board, FPGA family, device, and constraints. `SPINAL_LANES`
-selects how many SHA-256 lanes are generated. More lanes use more FPGA area and
-increase modeled hashrate; fewer lanes are the first thing to try on the 9K.
+selects how many top-level SHA-256 lanes are generated. More lanes use more
+FPGA area and increase modeled hashrate; fewer lanes are the first thing to try
+on the 9K.
 
 ## Setup
 
@@ -111,18 +112,27 @@ make build TARGET=tangnano20k \
 `SPINAL_FIXED_CANDIDATE` values are `0` for always report, `1` for `quick3`,
 `2` for `quick21`, `3` for `quick23`, and `4` for `quick26`. Leave it unset
 when you want the FPGA to infer the filter from target aliases in each job.
-The default `SPINAL_SHARED_K=1` shares the SHA-256 round-constant mux between
-the two compression engines in each lane.
+The round-skipped SHA path uses independent round-constant lookups for the
+first and second compression engines in each lane. Set `SPINAL_ROUND_SKIP=0`
+to build the experimental full 64-round A/B path instead.
+
+Experimental wider lanes can be generated with `SPINAL_PAIRS_PER_LANE=2` or
+`SPINAL_PAIRS_PER_LANE=4`. This keeps multiple A/B compressor pairs inside one
+local lane wrapper, sharing job state, first-pass prefix preparation,
+round-constant lookup wires, and local result selection. The default remains
+`SPINAL_PAIRS_PER_LANE=1`.
 
 Modeled hashrate is:
 
 ```text
-clock_hz * SPINAL_LANES / 64
+clock_hz * SPINAL_LANES * SPINAL_PAIRS_PER_LANE / rounds_per_nonce
 ```
 
-The default 20K build uses four lanes at `111 MHz`, or about `6.94 MH/s`. A 9K
-build uses the direct `27 MHz` clock, so one lane is about `422 kH/s` and two
-lanes are about `844 kH/s`, before any real hardware effects.
+`rounds_per_nonce` is `61` when `SPINAL_ROUND_SKIP=1` and `64` when
+`SPINAL_ROUND_SKIP=0`. The default 20K build uses four lanes at `111 MHz`, or
+about `7.28 MH/s`. A 9K build uses the direct `27 MHz` clock, so one lane is
+about `443 kH/s` and two lanes are about `885 kH/s`, before any real hardware
+effects.
 
 ## Load Or Flash
 
@@ -140,8 +150,10 @@ make flash TARGET=tangnano20k
 make flash TARGET=tangnano9k SPINAL_LANES=1
 ```
 
-Use the same `TARGET` and `SPINAL_LANES` values for `build`, `load`, and
-`flash`. If you omit `SPINAL_LANES`, the Makefile falls back to four lanes.
+Use the same `TARGET`, `SPINAL_LANES`, `SPINAL_PAIRS_PER_LANE`, and
+`SPINAL_ROUND_SKIP` values for `build`, `load`, and `flash`. If you omit
+`SPINAL_LANES`, the Makefile falls back to four lanes. If you omit
+`SPINAL_PAIRS_PER_LANE`, it falls back to one A/B pair per lane.
 
 For Tang Nano 20K boards, selecting the FTDI channel and using a slower JTAG
 clock is often more reliable:
@@ -249,9 +261,10 @@ Start with these docs when you need more detail:
 - 9K clock path: direct `27 MHz` board clock.
 - Protocol: binary UART packets starting with `TN`.
 
-The selected 20K build currently uses four compact SHA-256 lanes. For the 9K,
-start with one lane and only increase after nextpnr reports that placement,
-routing, timing, and utilization are acceptable.
+The selected 20K build currently uses four compact single-pair SHA-256 lanes.
+The experimental paired-lane shape uses fewer top-level lanes with multiple
+local A/B pairs each. For the 9K, start with one lane and only increase after
+nextpnr reports that placement, routing, timing, and utilization are acceptable.
 
 ## License
 

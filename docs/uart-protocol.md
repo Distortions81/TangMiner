@@ -51,9 +51,11 @@ The FPGA constructs the first-pass final block as:
 tail[12] || nonce[4] || 0x80 || zero padding || 0x00000280
 ```
 
-It then runs the second SHA-256 pass over the first digest. The current 20K
-bitstream starts four lanes at nonce words `0`, `1`, `2`, and `3`; each lane
-increments by `4`.
+It then runs the second SHA-256 pass over the first digest. The default 20K
+bitstream starts four single-pair lanes at nonce words `0`, `1`, `2`, and `3`;
+each lane increments by `4`. With wider paired lanes, local pairs in one wider
+lane take neighboring residues and the aggregate stride remains
+`SPINAL_LANES * SPINAL_PAIRS_PER_LANE`.
 
 ## Candidate Filtering
 
