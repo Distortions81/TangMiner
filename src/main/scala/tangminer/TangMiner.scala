@@ -297,12 +297,42 @@ class Sha256CompressWords extends Component {
   }
 
   val a, b, c, d, e, f, g, h = Reg(UInt(32 bits)) init 0
-  val w = Vec(Reg(UInt(32 bits)) init 0, 16)
+  val scheduleTap1 = Mem(UInt(32 bits), 16)
+  val scheduleTap9 = Mem(UInt(32 bits), 16)
+  val scheduleTap14 = Mem(UInt(32 bits), 16)
+  val scheduleMemories = Seq(scheduleTap1, scheduleTap9, scheduleTap14)
+  scheduleMemories.foreach { mem =>
+    mem.setTechnology(distributedLut)
+    mem.addAttribute("ram_style", "distributed")
+    mem.addAttribute("syn_ramstyle", "distributed_ram")
+  }
   val wRound = Reg(UInt(32 bits)) init 0
   val round = Reg(UInt(6 bits)) init 0
   val busyReg = Reg(Bool()) init False
 
-  val wNext = (Sha256.smallSigma1(w(14)) + w(9) + Sha256.smallSigma0(w(1)) + w(0)).resize(32)
+  def scheduleAddress(offset: Int): UInt =
+    (round(3 downto 0) + U(offset, 4 bits)).resized
+
+  def initialScheduleWord(offset: Int): UInt = offset match {
+    case 1 =>
+      Vec((1 until 16).map(io.words(_)) :+ io.words(15))(round(3 downto 0))
+    case 9 =>
+      Vec((9 until 16).map(io.words(_)) :+ io.words(15))(round(2 downto 0))
+    case 14 =>
+      Mux(round(0), io.words(15), io.words(14))
+  }
+
+  def scheduleTap(offset: Int, initialLimit: Int, mem: Mem[UInt]): UInt =
+    Mux(round < U(initialLimit, 6 bits), initialScheduleWord(offset), mem.readAsync(scheduleAddress(offset)))
+
+  val wTap1 = scheduleTap(1, 15, scheduleTap1)
+  val wTap9 = scheduleTap(9, 7, scheduleTap9)
+  val wTap14 = scheduleTap(14, 2, scheduleTap14)
+  val wNext = (Sha256.smallSigma1(wTap14) + wTap9 + Sha256.smallSigma0(wTap1) + wRound).resize(32)
+  val scheduleWriteEnable = Bool()
+  scheduleWriteEnable := False
+  scheduleMemories.foreach(_.write(round(3 downto 0), wNext, scheduleWriteEnable))
+
   val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + io.kWord + wRound).resize(32)
   val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
   val aNext = (t1 + t2).resize(32)
@@ -325,7 +355,6 @@ class Sha256CompressWords extends Component {
 
   when(io.reset) {
     a := 0; b := 0; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0
-    for (i <- 0 until 16) w(i) := 0
     wRound := 0
     round := 0
     busyReg := False
@@ -340,19 +369,13 @@ class Sha256CompressWords extends Component {
       g := io.stateIn(63 downto 32).asUInt
       h := io.stateIn(31 downto 0).asUInt
 
-      for (i <- 0 until 16) {
-        w(i) := io.words(i)
-      }
       wRound := io.words(0)
 
       round := 0
       busyReg := True
     } elsewhen(busyReg) {
-      for (i <- 0 until 15) {
-        w(i) := w(i + 1)
-      }
-      w(15) := wNext
-      wRound := w(1)
+      scheduleWriteEnable := True
+      wRound := wTap1
 
       h := g
       g := f
@@ -395,11 +418,13 @@ class Sha256BitcoinFirstPass extends Component {
   }
 
   val core = new Sha256CompressWords
+  val activeNonce = Reg(UInt(32 bits)) init 0
+  val nonceWord = Mux(io.start, io.nonce, activeNonce)
   val words = Vec(Seq(
     io.tail(95 downto 64).asUInt,
     io.tail(63 downto 32).asUInt,
     io.tail(31 downto 0).asUInt,
-    io.nonce,
+    nonceWord,
     U(BigInt("80000000", 16), 32 bits),
     U(0, 32 bits),
     U(0, 32 bits),
@@ -413,6 +438,12 @@ class Sha256BitcoinFirstPass extends Component {
     U(0, 32 bits),
     U(BigInt("00000280", 16), 32 bits)
   ))
+
+  when(io.reset) {
+    activeNonce := 0
+  } elsewhen(io.start) {
+    activeNonce := io.nonce
+  }
 
   core.io.reset := io.reset
   core.io.start := io.start
@@ -438,15 +469,17 @@ class Sha256BitcoinSecondPass extends Component {
 
   val core = new Sha256CompressWords
   val shaIv = Sha256Pass.ivBits
+  val activeFirstDigest = Reg(Bits(256 bits)) init 0
+  val firstDigestWords = Mux(io.start, io.firstDigest, activeFirstDigest)
   val words = Vec(Seq(
-    Sha256.wordFromDigest(io.firstDigest, 0),
-    Sha256.wordFromDigest(io.firstDigest, 1),
-    Sha256.wordFromDigest(io.firstDigest, 2),
-    Sha256.wordFromDigest(io.firstDigest, 3),
-    Sha256.wordFromDigest(io.firstDigest, 4),
-    Sha256.wordFromDigest(io.firstDigest, 5),
-    Sha256.wordFromDigest(io.firstDigest, 6),
-    Sha256.wordFromDigest(io.firstDigest, 7),
+    Sha256.wordFromDigest(firstDigestWords, 0),
+    Sha256.wordFromDigest(firstDigestWords, 1),
+    Sha256.wordFromDigest(firstDigestWords, 2),
+    Sha256.wordFromDigest(firstDigestWords, 3),
+    Sha256.wordFromDigest(firstDigestWords, 4),
+    Sha256.wordFromDigest(firstDigestWords, 5),
+    Sha256.wordFromDigest(firstDigestWords, 6),
+    Sha256.wordFromDigest(firstDigestWords, 7),
     U(BigInt("80000000", 16), 32 bits),
     U(0, 32 bits),
     U(0, 32 bits),
@@ -456,6 +489,12 @@ class Sha256BitcoinSecondPass extends Component {
     U(0, 32 bits),
     U(BigInt("00000100", 16), 32 bits)
   ))
+
+  when(io.reset) {
+    activeFirstDigest := 0
+  } elsewhen(io.start) {
+    activeFirstDigest := io.firstDigest
+  }
 
   core.io.reset := io.reset
   core.io.start := io.start
