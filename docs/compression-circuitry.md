@@ -66,11 +66,14 @@ the final digest in Bitcoin's byte-reversed proof-of-work ordering. The
 implementation stops the default second pass after round `60`, because the
 low32 filter word is `IV7 + e_after_round_60`. The full-round variant runs the
 second pass through round `63` and extracts the same low32 word from final `H7`.
-Both variants only wire the needed prefix bits for the selected quick filter;
-they do not build a full 256-bit reversed digest or target comparator in the
-four-lane 20K path. The host validates the returned candidate nonce by
-rebuilding the header and double-hashing it. If more than one lane is reporting,
-the top level latches one selected result before UART transmit.
+Both variants register the pre-feed-forward low word and let the candidate
+filter add only the low bits needed for the selected quick filter. A fixed
+`quick21` or `quick23` build therefore avoids carrying a full 32-bit IV add
+through the check path. They do not build a full 256-bit reversed digest or
+target comparator in the four-lane 20K path. The host validates the returned
+candidate nonce by rebuilding the header and double-hashing it. If more than
+one lane is reporting, the top level latches one selected result before UART
+transmit.
 
 For bring-up with frequent candidate output on the default `111 MHz` 20K build,
 the host tools accept the named target `quick23`:
@@ -198,9 +201,11 @@ active schedule word is registered as `wRound` so the round datapath does not
 read directly through the shifting schedule window. The first pass runs through
 round `63` and adds the result back to the host-provided midstate. The default
 second pass stops at round `60` and adds `e_after_round_60` to `IV7` for the
-low32 filter; the full-round variant runs through round `63` and uses final
-`H7`. Keeping feed-forward outside the compressor avoids duplicating the eight
-32-bit starting-state registers inside the round engine.
+low32 filter in the following check stage; the full-round variant runs through
+round `63` and uses final `H7`. Keeping feed-forward outside the compressor
+avoids duplicating the eight 32-bit starting-state registers inside the round
+engine, and staging the low32 feed-forward keeps that add out of the final SHA
+round path.
 
 ## Control Timing
 
@@ -220,7 +225,7 @@ sequenceDiagram
     Core->>SHA1: start next lane nonce first pass
     Note over SHA1,SHA2: both compressors run for the next 61 clocks
     SHA2-->>Core: done, workOut includes e_after_round_60
-    Core->>Core: add SHA256 IV7 to make digestLow32
+    Core->>Core: register low word, add needed IV7 bits
     Core->>Core: check reversed final digest prefix
     alt share found
         Core->>Core: latch found nonce

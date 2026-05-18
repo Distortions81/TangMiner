@@ -19,7 +19,8 @@ At a high level:
   wider lanes can hold two local A/B compressor pairs with shared job and
   prefix-preparation logic.
 - Each lane adds the SHA-256 feed-forward state outside the compressors: job
-  midstate for pass one, SHA-256 IV for pass two.
+  midstate for pass one, and only the selected low32 SHA-256 IV bits in the
+  pass-two candidate filter.
 - The final digest is checked in Bitcoin's byte-reversed proof-of-work ordering
   with a small prefix filter instead of a full 256-bit target comparator.
 - On a hit, a priority selector latches one found nonce and sends `F || nonce`.

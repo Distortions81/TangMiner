@@ -653,7 +653,7 @@ class Sha256BitcoinSecondPass extends Component {
     val firstDigest = in Bits(256 bits)
     val done = out Bool()
     val round = out UInt(6 bits)
-    val digestLow32 = out Bits(32 bits)
+    val workLow32 = out UInt(32 bits)
   }
 
   val core = new Sha256CompressWords
@@ -687,7 +687,7 @@ class Sha256BitcoinSecondPass extends Component {
 
   io.done := core.io.done
   io.round := core.io.roundOut
-  io.digestLow32 := Sha256.add32(Sha256.word(Sha256.Iv(7)), Sha256.wordFromDigest(core.io.workOut, 4)).asBits
+  io.workLow32 := Sha256.wordFromDigest(core.io.workOut, 4)
 }
 
 class Sha256BitcoinFirstPassFull64 extends Component {
@@ -751,7 +751,7 @@ class Sha256BitcoinSecondPassFixedLow32(stopRound: Int = 60) extends Component {
     val firstDigest = in Bits(256 bits)
     val done = out Bool()
     val round = out UInt(6 bits)
-    val digestLow32 = out Bits(32 bits)
+    val workLow32 = out UInt(32 bits)
   }
 
   val core = new Sha256CompressWordsFixed(stopRound = stopRound)
@@ -784,7 +784,7 @@ class Sha256BitcoinSecondPassFixedLow32(stopRound: Int = 60) extends Component {
   io.done := core.io.done
   io.round := core.io.roundOut
   val lowWordIndex = if (stopRound == 60) 4 else 7
-  io.digestLow32 := Sha256.add32(Sha256.word(Sha256.Iv(7)), Sha256.wordFromDigest(core.io.workOut, lowWordIndex)).asBits
+  io.workLow32 := Sha256.wordFromDigest(core.io.workOut, lowWordIndex)
 }
 
 case class BitcoinHashCoreIo() extends Bundle {
@@ -803,42 +803,59 @@ case class BitcoinHashCoreIo() extends Bundle {
 }
 
 object BitcoinCandidateFilter {
-  def meets(options: TangMinerHardwareOptions, mode: UInt, digestLow32: Bits): Bool = {
+  private val Iv7 = Sha256.Iv(7)
+
+  private def lowMask(width: Int): BigInt =
+    (BigInt(1) << width) - 1
+
+  private def addIv7Low(workLow32: UInt, width: Int): Bits = {
+    require(width > 0 && width <= 32, s"width must be 1..32, got $width")
+    (workLow32.asBits(width - 1 downto 0).asUInt + U(Iv7 & lowMask(width), width bits)).resize(width).asBits
+  }
+
+  private def quick3MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 5) === B(0, 3 bits)
+
+  private def quick21MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 0) === B(0, 8 bits) &&
+      digestLowBits(15 downto 8) === B(0, 8 bits) &&
+      digestLowBits(23 downto 19) === B(0, 5 bits)
+
+  private def quick23MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 0) === B(0, 8 bits) &&
+      digestLowBits(15 downto 8) === B(0, 8 bits) &&
+      digestLowBits(23 downto 17) === B(0, 7 bits)
+
+  private def quick26MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 0) === B(0, 8 bits) &&
+      digestLowBits(15 downto 8) === B(0, 8 bits) &&
+      digestLowBits(23 downto 16) === B(0, 8 bits) &&
+      digestLowBits(31 downto 30) === B(0, 2 bits)
+
+  def meets(options: TangMinerHardwareOptions, mode: UInt, workLow32: UInt): Bool = {
     val candidateAlwaysSelected = mode === U(0, 3 bits)
     val quick3TargetSelected = mode === U(1, 3 bits)
     val quick21TargetSelected = mode === U(2, 3 bits)
     val quick23TargetSelected = mode === U(3, 3 bits)
     val quick26TargetSelected = mode === U(4, 3 bits)
-    val quick3MeetsTarget = digestLow32(7 downto 5) === B(0, 3 bits)
-    val quick21MeetsTarget =
-      digestLow32(7 downto 0) === B(0, 8 bits) &&
-        digestLow32(15 downto 8) === B(0, 8 bits) &&
-        digestLow32(23 downto 19) === B(0, 5 bits)
-    val quick23MeetsTarget =
-      digestLow32(7 downto 0) === B(0, 8 bits) &&
-        digestLow32(15 downto 8) === B(0, 8 bits) &&
-        digestLow32(23 downto 17) === B(0, 7 bits)
-    val quick26MeetsTarget =
-      digestLow32(7 downto 0) === B(0, 8 bits) &&
-        digestLow32(15 downto 8) === B(0, 8 bits) &&
-        digestLow32(23 downto 16) === B(0, 8 bits) &&
-        digestLow32(31 downto 30) === B(0, 2 bits)
+
     def fixedCandidateMeetsTarget(fixedMode: Int): Bool = fixedMode match {
       case 0 => True
-      case 1 => quick3MeetsTarget
-      case 2 => quick21MeetsTarget
-      case 3 => quick23MeetsTarget
-      case 4 => quick26MeetsTarget
+      case 1 => quick3MeetsTarget(addIv7Low(workLow32, 8))
+      case 2 => quick21MeetsTarget(addIv7Low(workLow32, 24))
+      case 3 => quick23MeetsTarget(addIv7Low(workLow32, 24))
+      case 4 => quick26MeetsTarget(addIv7Low(workLow32, 32))
     }
 
     options.fixedCandidateMode match {
       case Some(fixedMode) => fixedCandidateMeetsTarget(fixedMode)
       case None =>
+        val digestLow32 = addIv7Low(workLow32, 32)
         candidateAlwaysSelected ||
-          (quick3TargetSelected && quick3MeetsTarget) ||
-          (quick21TargetSelected && quick21MeetsTarget) ||
-          (quick23TargetSelected && quick23MeetsTarget) ||
-          (quick26TargetSelected && quick26MeetsTarget)
+          (quick3TargetSelected && quick3MeetsTarget(digestLow32)) ||
+          (quick21TargetSelected && quick21MeetsTarget(digestLow32)) ||
+          (quick23TargetSelected && quick23MeetsTarget(digestLow32)) ||
+          (quick26TargetSelected && quick26MeetsTarget(digestLow32))
     }
   }
 }
@@ -860,7 +877,7 @@ class BitcoinHashCoreSingle(options: TangMinerHardwareOptions = TangMinerHardwar
   val firstNonceReg = Reg(UInt(32 bits)) init 0
   val secondNonceReg = Reg(UInt(32 bits)) init 0
   val checkValidReg = Reg(Bool()) init False
-  val checkDigestLow32Reg = Reg(Bits(32 bits)) init 0
+  val checkWorkLow32Reg = Reg(UInt(32 bits)) init 0
   val checkNonceReg = Reg(UInt(32 bits)) init 0
   val checkCandidateModeReg = Reg(UInt(3 bits)) init 3
   val foundNonceReg = Reg(UInt(32 bits)) init 0
@@ -893,7 +910,7 @@ class BitcoinHashCoreSingle(options: TangMinerHardwareOptions = TangMinerHardwar
   shaFirst.io.kWord := firstKWord
   shaSecond.io.kWord := secondKWord
 
-  val checkDigestMeetsTarget = BitcoinCandidateFilter.meets(options, checkCandidateModeReg, checkDigestLow32Reg)
+  val checkDigestMeetsTarget = BitcoinCandidateFilter.meets(options, checkCandidateModeReg, checkWorkLow32Reg)
 
   io.running := state =/= State.idle && state =/= State.report
   io.found := state === State.report
@@ -908,7 +925,7 @@ class BitcoinHashCoreSingle(options: TangMinerHardwareOptions = TangMinerHardwar
     firstNonceReg := 0
     secondNonceReg := 0
     checkValidReg := False
-    checkDigestLow32Reg := 0
+    checkWorkLow32Reg := 0
     checkNonceReg := 0
     checkCandidateModeReg := 3
     foundNonceReg := 0
@@ -957,7 +974,7 @@ class BitcoinHashCoreSingle(options: TangMinerHardwareOptions = TangMinerHardwar
 
             when(shaSecond.io.done) {
               checkValidReg := True
-              checkDigestLow32Reg := shaSecond.io.digestLow32
+              checkWorkLow32Reg := shaSecond.io.workLow32
               checkNonceReg := secondNonceReg
               checkCandidateModeReg := jobCandidateModeReg
             }
@@ -992,7 +1009,7 @@ class BitcoinHashCoreMultiPair(options: TangMinerHardwareOptions = TangMinerHard
   val secondBaseNonceReg = Reg(UInt(32 bits)) init 0
   val checkBaseNonceReg = Reg(UInt(32 bits)) init 0
   val checkValidReg = Vec(Reg(Bool()) init False, PairCount)
-  val checkDigestLow32Reg = Vec(Reg(Bits(32 bits)) init 0, PairCount)
+  val checkWorkLow32Reg = Vec(Reg(UInt(32 bits)) init 0, PairCount)
   val foundNonceReg = Reg(UInt(32 bits)) init 0
   val currentPairNonce = Vec((0 until PairCount).map(pair => Sha256.add32(currentBaseNonceReg, U(pair, 32 bits))))
 
@@ -1046,7 +1063,7 @@ class BitcoinHashCoreMultiPair(options: TangMinerHardwareOptions = TangMinerHard
   val firstDone = shaFirstDone.reduce(_ && _)
   val secondDone = shaSecond.map(_.io.done).reduce(_ && _)
   val digestMeetsTarget = Vec((0 until PairCount).map(pair =>
-    BitcoinCandidateFilter.meets(options, jobCandidateModeReg, checkDigestLow32Reg(pair))
+    BitcoinCandidateFilter.meets(options, jobCandidateModeReg, checkWorkLow32Reg(pair))
   ))
   val checkHit = (0 until PairCount).map(pair => checkValidReg(pair) && digestMeetsTarget(pair))
   val selectedCheckNonce = UInt(32 bits)
@@ -1074,7 +1091,7 @@ class BitcoinHashCoreMultiPair(options: TangMinerHardwareOptions = TangMinerHard
     foundNonceReg := 0
     for (pair <- 0 until PairCount) {
       checkValidReg(pair) := False
-      checkDigestLow32Reg(pair) := 0
+      checkWorkLow32Reg(pair) := 0
     }
   } otherwise {
     when(io.stop) {
@@ -1131,7 +1148,7 @@ class BitcoinHashCoreMultiPair(options: TangMinerHardwareOptions = TangMinerHard
               checkBaseNonceReg := secondBaseNonceReg
               for (pair <- 0 until PairCount) {
                 checkValidReg(pair) := True
-                checkDigestLow32Reg(pair) := shaSecond(pair).io.digestLow32
+                checkWorkLow32Reg(pair) := shaSecond(pair).io.workLow32
               }
             }
           }
@@ -1159,7 +1176,7 @@ class BitcoinHashCoreSingleFull64(options: TangMinerHardwareOptions = TangMinerH
   val firstNonceReg = Reg(UInt(32 bits)) init 0
   val secondNonceReg = Reg(UInt(32 bits)) init 0
   val checkValidReg = Reg(Bool()) init False
-  val checkDigestLow32Reg = Reg(Bits(32 bits)) init 0
+  val checkWorkLow32Reg = Reg(UInt(32 bits)) init 0
   val checkNonceReg = Reg(UInt(32 bits)) init 0
   val checkCandidateModeReg = Reg(UInt(3 bits)) init 3
   val foundNonceReg = Reg(UInt(32 bits)) init 0
@@ -1186,7 +1203,7 @@ class BitcoinHashCoreSingleFull64(options: TangMinerHardwareOptions = TangMinerH
   shaFirst.io.kWord := kVec(shaFirst.io.round)
   shaSecond.io.kWord := kVec(shaSecond.io.round)
 
-  val checkDigestMeetsTarget = BitcoinCandidateFilter.meets(options, checkCandidateModeReg, checkDigestLow32Reg)
+  val checkDigestMeetsTarget = BitcoinCandidateFilter.meets(options, checkCandidateModeReg, checkWorkLow32Reg)
 
   io.running := state =/= State.idle && state =/= State.report
   io.found := state === State.report
@@ -1201,7 +1218,7 @@ class BitcoinHashCoreSingleFull64(options: TangMinerHardwareOptions = TangMinerH
     firstNonceReg := 0
     secondNonceReg := 0
     checkValidReg := False
-    checkDigestLow32Reg := 0
+    checkWorkLow32Reg := 0
     checkNonceReg := 0
     checkCandidateModeReg := 3
     foundNonceReg := 0
@@ -1246,7 +1263,7 @@ class BitcoinHashCoreSingleFull64(options: TangMinerHardwareOptions = TangMinerH
 
             when(shaSecond.io.done) {
               checkValidReg := True
-              checkDigestLow32Reg := shaSecond.io.digestLow32
+              checkWorkLow32Reg := shaSecond.io.workLow32
               checkNonceReg := secondNonceReg
               checkCandidateModeReg := jobCandidateModeReg
             }
@@ -1280,7 +1297,7 @@ class BitcoinHashCoreMultiPairFull64(options: TangMinerHardwareOptions = TangMin
   val secondBaseNonceReg = Reg(UInt(32 bits)) init 0
   val checkBaseNonceReg = Reg(UInt(32 bits)) init 0
   val checkValidReg = Vec(Reg(Bool()) init False, PairCount)
-  val checkDigestLow32Reg = Vec(Reg(Bits(32 bits)) init 0, PairCount)
+  val checkWorkLow32Reg = Vec(Reg(UInt(32 bits)) init 0, PairCount)
   val foundNonceReg = Reg(UInt(32 bits)) init 0
   val currentPairNonce = Vec((0 until PairCount).map(pair => Sha256.add32(currentBaseNonceReg, U(pair, 32 bits))))
 
@@ -1318,7 +1335,7 @@ class BitcoinHashCoreMultiPairFull64(options: TangMinerHardwareOptions = TangMin
   val firstDone = shaFirst.map(_.io.done).reduce(_ && _)
   val secondDone = shaSecond.map(_.io.done).reduce(_ && _)
   val digestMeetsTarget = Vec((0 until PairCount).map(pair =>
-    BitcoinCandidateFilter.meets(options, jobCandidateModeReg, checkDigestLow32Reg(pair))
+    BitcoinCandidateFilter.meets(options, jobCandidateModeReg, checkWorkLow32Reg(pair))
   ))
   val checkHit = (0 until PairCount).map(pair => checkValidReg(pair) && digestMeetsTarget(pair))
   val selectedCheckNonce = UInt(32 bits)
@@ -1346,7 +1363,7 @@ class BitcoinHashCoreMultiPairFull64(options: TangMinerHardwareOptions = TangMin
     foundNonceReg := 0
     for (pair <- 0 until PairCount) {
       checkValidReg(pair) := False
-      checkDigestLow32Reg(pair) := 0
+      checkWorkLow32Reg(pair) := 0
     }
   } otherwise {
     when(io.stop) {
@@ -1399,7 +1416,7 @@ class BitcoinHashCoreMultiPairFull64(options: TangMinerHardwareOptions = TangMin
               checkBaseNonceReg := secondBaseNonceReg
               for (pair <- 0 until PairCount) {
                 checkValidReg(pair) := True
-                checkDigestLow32Reg(pair) := shaSecond(pair).io.digestLow32
+                checkWorkLow32Reg(pair) := shaSecond(pair).io.workLow32
               }
             }
           }

@@ -112,6 +112,8 @@ make build TARGET=tangnano20k \
 `SPINAL_FIXED_CANDIDATE` values are `0` for always report, `1` for `quick3`,
 `2` for `quick21`, `3` for `quick23`, and `4` for `quick26`. Leave it unset
 when you want the FPGA to infer the filter from target aliases in each job.
+Fixed `quick21`/`quick23` builds also trim the final second-pass low32 add/check
+logic to the required low bits.
 The round-skipped SHA path uses independent round-constant lookups for the
 first and second compression engines in each lane. Set `SPINAL_ROUND_SKIP=0`
 to build the experimental full 64-round A/B path instead.
