@@ -17,7 +17,8 @@ case class TangMinerHardwareOptions(
   sharedRoundConstant: Boolean = true,
   enableEcho: Boolean = true,
   enableHardcodedJob: Boolean = true,
-  fixedCandidateMode: Option[Int] = None
+  fixedCandidateMode: Option[Int] = None,
+  wideLaneBlock: Boolean = false
 ) {
   fixedCandidateMode.foreach(mode =>
     require(mode >= 0 && mode <= 4, s"fixedCandidateMode must be 0..4, got $mode")
@@ -633,6 +634,70 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   }
 }
 
+class BitcoinHashWideLaneBlock(
+  laneCount: Int,
+  options: TangMinerHardwareOptions = TangMinerHardwareOptions()
+) extends Component {
+  require(laneCount > 0, "laneCount must be positive")
+
+  val io = new Bundle {
+    val reset = in Bool()
+    val start = in Bool()
+    val stop = in Bool()
+    val midstate = in Bits(256 bits)
+    val tail = in Bits(96 bits)
+    val candidateMode = in UInt(3 bits)
+    val runningAny = out Bool()
+    val foundAny = out Bool()
+    val foundNonce = out UInt(32 bits)
+    val currentNonce = out UInt(32 bits)
+  }
+
+  val jobMidstateReg = Reg(Bits(256 bits)) init 0
+  val jobTailReg = Reg(Bits(96 bits)) init 0
+  val jobCandidateModeReg = Reg(UInt(3 bits)) init 3
+  val startCoresReg = Reg(Bool()) init False
+
+  val cores = (0 until laneCount).map(_ => new BitcoinHashCore(options.copy(wideLaneBlock = false)))
+
+  when(io.reset) {
+    jobMidstateReg := 0
+    jobTailReg := 0
+    jobCandidateModeReg := 3
+    startCoresReg := False
+  } otherwise {
+    startCoresReg := False
+    when(io.start) {
+      jobMidstateReg := io.midstate
+      jobTailReg := io.tail
+      jobCandidateModeReg := io.candidateMode
+      startCoresReg := True
+    }
+  }
+
+  for ((core, lane) <- cores.zipWithIndex) {
+    core.io.reset := io.reset
+    core.io.start := startCoresReg
+    core.io.stop := io.stop
+    core.io.midstate := jobMidstateReg
+    core.io.tail := jobTailReg
+    core.io.candidateMode := jobCandidateModeReg
+    core.io.startNonce := U(lane, 32 bits)
+    core.io.nonceStride := U(laneCount, 32 bits)
+  }
+
+  io.runningAny := cores.map(_.io.running).reduce(_ || _)
+  io.foundAny := cores.map(_.io.found).reduce(_ || _)
+  io.currentNonce := cores(0).io.currentNonce
+
+  io.foundNonce := cores(laneCount - 1).io.foundNonce
+  for (lane <- (0 until laneCount - 1).reverse) {
+    when(cores(lane).io.found) {
+      io.foundNonce := cores(lane).io.foundNonce
+    }
+  }
+}
+
 class Top(
   clksPerBit: Int = 234,
   resetCounterBits: Int = 24,
@@ -711,9 +776,6 @@ class Top(
     val tx = new UartTx(ClksPerBit)
     tx.io.reset := reset
 
-    val cores = (0 until LaneCount).map(_ => new BitcoinHashCore(hardwareOptions))
-    cores.foreach(_.io.reset := reset)
-
     object RxState extends SpinalEnum {
       val sync0, sync1, cmd, payload = newElement()
     }
@@ -739,26 +801,46 @@ class Top(
     val coreStartPending = Reg(Bool()) init False
     val echoToggle = if (hardwareOptions.enableEcho) Reg(Bool()) init False else False
 
-    for ((core, lane) <- cores.zipWithIndex) {
-      core.io.start := coreStart
-      core.io.stop := coreStop
-      core.io.midstate := midstate
-      core.io.tail := tail
-      core.io.candidateMode := candidateMode
-      core.io.startNonce := U(lane, 32 bits)
-      core.io.nonceStride := U(LaneCount, 32 bits)
-    }
-
-    val runningAny = cores.map(_.io.running).reduce(_ || _)
-    val foundAny = cores.map(_.io.found).reduce(_ || _)
+    val runningAny = Bool()
+    val foundAny = Bool()
     val currentNonce = UInt(32 bits)
-    currentNonce := cores(0).io.currentNonce
-
     val selectedFoundNonce = UInt(32 bits)
-    selectedFoundNonce := cores(LaneCount - 1).io.foundNonce
-    for (lane <- (0 until LaneCount - 1).reverse) {
-      when(cores(lane).io.found) {
-        selectedFoundNonce := cores(lane).io.foundNonce
+
+    if (hardwareOptions.wideLaneBlock) {
+      val lanes = new BitcoinHashWideLaneBlock(LaneCount, hardwareOptions)
+      lanes.io.reset := reset
+      lanes.io.start := coreStart
+      lanes.io.stop := coreStop
+      lanes.io.midstate := midstate
+      lanes.io.tail := tail
+      lanes.io.candidateMode := candidateMode
+      runningAny := lanes.io.runningAny
+      foundAny := lanes.io.foundAny
+      currentNonce := lanes.io.currentNonce
+      selectedFoundNonce := lanes.io.foundNonce
+    } else {
+      val cores = (0 until LaneCount).map(_ => new BitcoinHashCore(hardwareOptions))
+      cores.foreach(_.io.reset := reset)
+
+      for ((core, lane) <- cores.zipWithIndex) {
+        core.io.start := coreStart
+        core.io.stop := coreStop
+        core.io.midstate := midstate
+        core.io.tail := tail
+        core.io.candidateMode := candidateMode
+        core.io.startNonce := U(lane, 32 bits)
+        core.io.nonceStride := U(LaneCount, 32 bits)
+      }
+
+      runningAny := cores.map(_.io.running).reduce(_ || _)
+      foundAny := cores.map(_.io.found).reduce(_ || _)
+      currentNonce := cores(0).io.currentNonce
+
+      selectedFoundNonce := cores(LaneCount - 1).io.foundNonce
+      for (lane <- (0 until LaneCount - 1).reverse) {
+        when(cores(lane).io.found) {
+          selectedFoundNonce := cores(lane).io.foundNonce
+        }
       }
     }
 
@@ -1040,7 +1122,8 @@ object GenerateVerilog extends App {
     sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
     enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = true),
     enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = true),
-    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"))
+    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE")),
+    wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false)
   )
 
   SpinalConfig(
@@ -1071,7 +1154,8 @@ object GenerateSimVerilog extends App {
     sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
     enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = true),
     enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = true),
-    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"))
+    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE")),
+    wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false)
   )
 
   SpinalConfig(

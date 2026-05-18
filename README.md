@@ -74,9 +74,31 @@ make build TARGET=tangnano9k SPINAL_LANES=1
 make build TARGET=tangnano9k SPINAL_LANES=2
 ```
 
-The default lane count is `SPINAL_LANES=4`, which is intended for the 20K. If a
-9K build fails placement, routing, or resource use, reduce `SPINAL_LANES` and
-build again.
+The default 20K build is the current production-oriented 5-lane configuration:
+`SPINAL_LANES=5`, `SPINAL_CLOCK_PROFILE=100m286`, `SPINAL_ENABLE_ECHO=0`,
+`SPINAL_ENABLE_HARDCODED=0`, `SPINAL_FIXED_CANDIDATE=2`, and
+`NEXTPNR_SEED=13`. It models at about `7.84 MH/s`:
+
+```text
+100.286 MHz * 5 lanes / 64 = 7.835 MH/s
+```
+
+This route is seed-sensitive. Local testing found seed 13 passing with about
+`116.28 MHz` Fmax, while several other seeds failed placement. If you need the
+older development-friendly 20K build with UART echo and hardcoded smoke-job
+support, build it explicitly:
+
+```sh
+make build TARGET=tangnano20k \
+  SPINAL_LANES=4 \
+  SPINAL_CLOCK_PROFILE=111m \
+  SPINAL_ENABLE_ECHO=1 \
+  SPINAL_ENABLE_HARDCODED=1 \
+  SPINAL_FIXED_CANDIDATE=
+```
+
+If a 9K build fails placement, routing, or resource use, reduce `SPINAL_LANES`
+and build again.
 
 Generated bitstreams are written under `build/`, for example:
 
@@ -97,9 +119,9 @@ make build-verilog TARGET=tangnano9k
 `build-verilog` uses the legacy hand-written Verilog path. The default `build`
 target uses the SpinalHDL design.
 
-For a smaller production-oriented 20K build, remove UART echo support, remove
-the hardcoded smoke-test job, and fix the FPGA candidate filter to the Stratum
-wrapper's default `quick21` mode:
+For a smaller production-oriented 20K build at a different lane count or clock,
+remove UART echo support, remove the hardcoded smoke-test job, and fix the FPGA
+candidate filter to the Stratum wrapper's default `quick21` mode:
 
 ```sh
 make build TARGET=tangnano20k \
@@ -120,9 +142,9 @@ Modeled hashrate is:
 clock_hz * SPINAL_LANES / 64
 ```
 
-The default 20K build uses four lanes at `111 MHz`, or about `6.94 MH/s`. A 9K
-build uses the direct `27 MHz` clock, so one lane is about `422 kH/s` and two
-lanes are about `844 kH/s`, before any real hardware effects.
+The default 20K build uses five lanes at `100.286 MHz`, or about `7.84 MH/s`.
+A 9K build uses the direct `27 MHz` clock, so one lane is about `422 kH/s` and
+two lanes are about `844 kH/s`, before any real hardware effects.
 
 ## Load Or Flash
 
@@ -141,7 +163,7 @@ make flash TARGET=tangnano9k SPINAL_LANES=1
 ```
 
 Use the same `TARGET` and `SPINAL_LANES` values for `build`, `load`, and
-`flash`. If you omit `SPINAL_LANES`, the Makefile falls back to four lanes.
+`flash`. If you omit `SPINAL_LANES`, the Makefile uses the target default.
 
 For Tang Nano 20K boards, selecting the FTDI channel and using a slower JTAG
 clock is often more reliable:

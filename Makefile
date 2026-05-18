@@ -13,7 +13,7 @@ FAMILY := GW2A-18C
 DEVICE := GW2AR-LV18QN88C8/I7
 CST := constr/tangnano20k.cst
 SPINAL_USE_PLL ?= 1
-SPINAL_CLOCK_PROFILE ?= 111m
+SPINAL_CLOCK_PROFILE ?= 100m286
 else
 $(error Unsupported TARGET '$(TARGET)'. Use tangnano20k or tangnano9k)
 endif
@@ -49,11 +49,24 @@ $(error TARGET=tangnano9k only supports SPINAL_CLOCK_PROFILE=27m)
 endif
 endif
 
+ifeq ($(TARGET),tangnano20k)
+SPINAL_LANES ?= 5
+SPINAL_ENABLE_ECHO ?= 0
+SPINAL_ENABLE_HARDCODED ?= 0
+SPINAL_FIXED_CANDIDATE ?= 2
+NEXTPNR_SEED ?= 13
+else
 SPINAL_LANES ?= 4
-SPINAL_SHARED_K ?= 1
 SPINAL_ENABLE_ECHO ?= 1
 SPINAL_ENABLE_HARDCODED ?= 1
 SPINAL_FIXED_CANDIDATE ?=
+NEXTPNR_SEED ?=
+endif
+SPINAL_SHARED_K ?= 1
+SPINAL_WIDE_LANES ?= 0
+YOSYS_PRE_SYNTH_CMDS ?=
+YOSYS_SYNTH_ARGS ?=
+NEXTPNR_SEED_ARG := $(if $(NEXTPNR_SEED),--seed $(NEXTPNR_SEED),)
 TOP := top
 BUILD := build
 SRC := src/top.v src/uart_rx.v src/uart_tx.v src/bitcoin_hash_core.v src/sha256_compress.v
@@ -117,6 +130,10 @@ $(SPINAL_CONFIG): FORCE | $(BUILD)/.dir
 	  echo "enable_echo=$(SPINAL_ENABLE_ECHO)"; \
 	  echo "enable_hardcoded=$(SPINAL_ENABLE_HARDCODED)"; \
 	  echo "fixed_candidate=$(SPINAL_FIXED_CANDIDATE)"; \
+	  echo "wide_lanes=$(SPINAL_WIDE_LANES)"; \
+	  echo "yosys_pre_synth_cmds=$(YOSYS_PRE_SYNTH_CMDS)"; \
+	  echo "yosys_synth_args=$(YOSYS_SYNTH_ARGS)"; \
+	  echo "nextpnr_seed=$(NEXTPNR_SEED)"; \
 	} > "$$tmp"; \
 	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm "$$tmp"; fi
 
@@ -130,30 +147,31 @@ $(SPINAL_SIM_CONFIG): FORCE | $(BUILD)/.dir
 	  echo "enable_echo=$(SPINAL_ENABLE_ECHO)"; \
 	  echo "enable_hardcoded=$(SPINAL_ENABLE_HARDCODED)"; \
 	  echo "fixed_candidate=$(SPINAL_FIXED_CANDIDATE)"; \
+	  echo "wide_lanes=$(SPINAL_WIDE_LANES)"; \
 	} > "$$tmp"; \
 	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm "$$tmp"; fi
 
 $(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_CONFIG) | $(BUILD)/.dir
 	mkdir -p $(SPINAL_DIR)
-	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateVerilog"
+	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) TANGMINER_WIDE_LANES=$(SPINAL_WIDE_LANES) $(SBT) "runMain tangminer.GenerateVerilog"
 
 $(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_SIM_CONFIG) | $(BUILD)/.dir
-	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) $(SBT) "runMain tangminer.GenerateSimVerilog"
+	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) TANGMINER_WIDE_LANES=$(SPINAL_WIDE_LANES) $(SBT) "runMain tangminer.GenerateSimVerilog"
 
 $(VERILOG_PREFIX).json: $(SRC) | $(BUILD)/.dir
-	$(YOSYS) -p "read_verilog $(SRC); synth_gowin -top $(TOP) -json $@"
+	$(YOSYS) -p "read_verilog $(SRC); $(YOSYS_PRE_SYNTH_CMDS) synth_gowin $(YOSYS_SYNTH_ARGS) -top $(TOP) -json $@"
 
 $(VERILOG_PREFIX)_pnr.json: $(VERILOG_PREFIX).json $(CST)
-	$(NEXTPNR) --json $< --write $@ --freq 27 --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST)
+	$(NEXTPNR) --json $< --write $@ --freq 27 --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST) $(NEXTPNR_SEED_ARG)
 
 $(VERILOG_PREFIX).fs: $(VERILOG_PREFIX)_pnr.json
 	$(GOWIN_PACK) -d $(FAMILY) -o $@ $<
 
 $(SPINAL_PREFIX).json: $(SPINAL_SRC) | $(BUILD)/.dir
-	$(YOSYS) -p "read_verilog $(SPINAL_SRC); synth_gowin -top $(TOP) -json $@"
+	$(YOSYS) -p "read_verilog $(SPINAL_SRC); $(YOSYS_PRE_SYNTH_CMDS) synth_gowin $(YOSYS_SYNTH_ARGS) -top $(TOP) -json $@"
 
 $(SPINAL_PREFIX)_pnr.json: $(SPINAL_PREFIX).json $(CST)
-	$(NEXTPNR) --json $< --write $@ --freq $(SPINAL_CLOCK_MHZ) --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST)
+	$(NEXTPNR) --json $< --write $@ --freq $(SPINAL_CLOCK_MHZ) --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST) $(NEXTPNR_SEED_ARG)
 
 $(SPINAL_PREFIX).fs: $(SPINAL_PREFIX)_pnr.json
 	$(GOWIN_PACK) -d $(FAMILY) -o $@ $<
