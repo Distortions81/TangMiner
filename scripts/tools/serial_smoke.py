@@ -65,7 +65,7 @@ def main():
     parser.add_argument(
         "--target",
         default="all-ones",
-        help="target hex or alias: all-ones, quick23, quick26, quick21, quick3. quick23 averages about 1.2 seconds on the 111 MHz 20K build.",
+        help="target hex or alias: all-ones, quick3, quick14, quick21, quick23, quick26.",
     )
     parser.add_argument("--echo", action="store_true", help="ask FPGA to echo the parsed job instead of hashing")
     parser.add_argument("--hardcoded", action="store_true", help="ask FPGA to run its built-in genesis nonce-zero job")

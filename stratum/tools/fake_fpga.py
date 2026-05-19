@@ -18,12 +18,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "tools"))
 
-from make_job import QUICK3_TARGET, QUICK21_TARGET, QUICK23_TARGET, QUICK26_TARGET  # noqa: E402
+from make_job import QUICK3_TARGET, QUICK14_TARGET, QUICK21_TARGET, QUICK23_TARGET, QUICK26_TARGET  # noqa: E402
 from tangminer_emulator import TangMinerEmulator  # noqa: E402
 
 
 QUICK_TARGETS = {
     "quick3": QUICK3_TARGET,
+    "quick14": QUICK14_TARGET,
     "quick21": QUICK21_TARGET,
     "quick23": QUICK23_TARGET,
     "quick26": QUICK26_TARGET,
@@ -33,7 +34,7 @@ QUICK_TARGETS = {
 def parse_quick_target(name: str):
     key = name.lower().replace("-", "")
     if key not in QUICK_TARGETS:
-        raise argparse.ArgumentTypeError("target must be quick3, quick21, quick23, or quick26")
+        raise argparse.ArgumentTypeError("target must be quick3, quick14, quick21, quick23, or quick26")
     return QUICK_TARGETS[key]
 
 

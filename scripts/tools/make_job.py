@@ -6,6 +6,7 @@ import sys
 
 ALL_ONES_TARGET = b"\xff" * 32
 QUICK3_TARGET = bytes.fromhex("1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+QUICK14_TARGET = bytes.fromhex("0003ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 QUICK21_TARGET = bytes.fromhex("000007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 QUICK23_TARGET = bytes.fromhex("000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 QUICK26_TARGET = bytes.fromhex("0000003fffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
@@ -135,6 +136,8 @@ def parse_target(value):
         return ALL_ONES_TARGET
     if name in ("quick3", "quick-3", "test3", "test-3"):
         return QUICK3_TARGET
+    if name in ("quick14", "quick-14"):
+        return QUICK14_TARGET
     if name in ("quick21", "quick-21"):
         return QUICK21_TARGET
     if name in ("quick23", "quick-23", "10s", "ten-second", "ten-seconds", "10s4", "ten-second-4-lane", "ten-seconds-4-lane"):
@@ -150,7 +153,7 @@ def main():
     parser.add_argument(
         "--target",
         required=True,
-        help="32-byte big-endian target hex, or alias quick23/quick26/quick21/quick3/all-ones",
+        help="32-byte big-endian target hex, or alias quick3/quick14/quick21/quick23/quick26/all-ones",
     )
     parser.add_argument("--verify", action="store_true", help="print the double-SHA256 hash for the header")
     args = parser.parse_args()

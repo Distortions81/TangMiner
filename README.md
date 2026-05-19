@@ -47,6 +47,11 @@ Mine through the real RTL without hardware:
 scripts/mine-rtl.sh
 ```
 
+`mine-rtl.sh` benchmarks Verilator first, then picks an RTL-friendly candidate
+gate and Stratum suggested difficulty. Override with `RTL_FPGA_TARGET`,
+`RTL_SUGGEST_DIFFICULTY`, `RTL_BENCHMARK_SECONDS`, or
+`RTL_TARGET_SHARES_PER_MINUTE` when needed.
+
 Mine with a Tang Nano board:
 
 ```sh
@@ -142,7 +147,7 @@ make build TARGET=tangnano20k \
 ```
 
 `SPINAL_FIXED_CANDIDATE` values are `0` for always report, `1` for `quick3`,
-`2` for `quick21`, `3` for `quick23`, and `4` for `quick26`. Leave it unset
+`2` for `quick21`, `3` for `quick23`, `4` for `quick26`, and `5` for `quick14`. Leave it unset
 when you want the FPGA to infer the filter from target aliases in each job.
 The default `SPINAL_SHARED_K=1` shares the SHA-256 round-constant mux between
 the two compression engines in each lane.
@@ -236,6 +241,7 @@ Defaults:
 - Pool: `tinyminer.m45core.com:3333`
 - Worker: `3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45`
 - Software FPGA filter: `quick3`
+- RTL FPGA filter: auto-selected, usually `quick14`
 - Suggested difficulty: `0.0000046566`
 
 Use `VERBOSE=1 scripts/mine-software.sh` or `VERBOSE=1 scripts/mine-rtl.sh` to print every candidate. Use

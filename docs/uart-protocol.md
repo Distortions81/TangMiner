@@ -66,6 +66,7 @@ Recognized aliases:
 - `all-ones` / `easy`: always report the first checked nonce.
 - `quick3`: require the top 3 bits of `reverse_bytes(hash)` to be zero.
 - `quick21`: require the top 21 bits of `reverse_bytes(hash)` to be zero.
+- `quick14`: require the top 14 bits of `reverse_bytes(hash)` to be zero.
 - `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero.
 - `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero.
 

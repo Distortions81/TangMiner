@@ -21,6 +21,7 @@ from make_job import (
     ALL_ONES_TARGET,
     IV,
     QUICK3_TARGET,
+    QUICK14_TARGET,
     QUICK21_TARGET,
     QUICK23_TARGET,
     QUICK26_TARGET,
@@ -102,6 +103,8 @@ def candidate_zero_bits_for_target(target: bytes) -> int:
         return 0
     if target == QUICK3_TARGET:
         return 3
+    if target == QUICK14_TARGET:
+        return 14
     if target == QUICK21_TARGET:
         return 21
     if target == QUICK26_TARGET:

@@ -21,7 +21,7 @@ case class TangMinerHardwareOptions(
   wideLaneBlock: Boolean = false
 ) {
   fixedCandidateMode.foreach(mode =>
-    require(mode >= 0 && mode <= 4, s"fixedCandidateMode must be 0..4, got $mode")
+    require(mode >= 0 && mode <= 5, s"fixedCandidateMode must be 0..5, got $mode")
   )
 }
 
@@ -532,7 +532,11 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   val quick21TargetSelected = checkCandidateModeReg === U(2, 3 bits)
   val quick23TargetSelected = checkCandidateModeReg === U(3, 3 bits)
   val quick26TargetSelected = checkCandidateModeReg === U(4, 3 bits)
+  val quick14TargetSelected = checkCandidateModeReg === U(5, 3 bits)
   val quick3MeetsTarget = checkDigestLow32Reg(7 downto 5) === B(0, 3 bits)
+  val quick14MeetsTarget =
+    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
+      checkDigestLow32Reg(15 downto 10) === B(0, 6 bits)
   val quick21MeetsTarget =
     checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
       checkDigestLow32Reg(15 downto 8) === B(0, 8 bits) &&
@@ -552,12 +556,14 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
     case 2 => quick21MeetsTarget
     case 3 => quick23MeetsTarget
     case 4 => quick26MeetsTarget
+    case 5 => quick14MeetsTarget
   }
   val checkDigestMeetsTarget = options.fixedCandidateMode match {
     case Some(mode) => fixedCandidateMeetsTarget(mode)
     case None =>
       candidateAlwaysSelected ||
         (quick3TargetSelected && quick3MeetsTarget) ||
+        (quick14TargetSelected && quick14MeetsTarget) ||
         (quick21TargetSelected && quick21MeetsTarget) ||
         (quick23TargetSelected && quick23MeetsTarget) ||
         (quick26TargetSelected && quick26MeetsTarget)
@@ -754,8 +760,10 @@ class Top(
     val CandidateQuick21 = U(2, 3 bits)
     val CandidateQuick23 = U(3, 3 bits)
     val CandidateQuick26 = U(4, 3 bits)
+    val CandidateQuick14 = U(5, 3 bits)
     val DefaultCandidate = U(hardwareOptions.fixedCandidateMode.getOrElse(3), 3 bits)
     val Quick3Target = B"256'h1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    val Quick14Target = B"256'h0003ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     val Quick21Target = B"256'h000007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     val Quick23Target = B"256'h000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     val Quick26Target = B"256'h0000003fffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -792,6 +800,7 @@ class Top(
     val target = if (hardwareOptions.enableEcho) Reg(Bits(256 bits)) init 0 else B(0, 256 bits)
     val targetIsAllOnes = if (useTargetAliases) Reg(Bool()) init True else False
     val targetIsQuick3 = if (useTargetAliases) Reg(Bool()) init False else False
+    val targetIsQuick14 = if (useTargetAliases) Reg(Bool()) init False else False
     val targetIsQuick21 = if (useTargetAliases) Reg(Bool()) init False else False
     val targetIsQuick23 = if (useTargetAliases) Reg(Bool()) init False else False
     val targetIsQuick26 = if (useTargetAliases) Reg(Bool()) init False else False
@@ -860,6 +869,7 @@ class Top(
       if (useTargetAliases) {
         targetIsAllOnes := True
         targetIsQuick3 := False
+        targetIsQuick14 := False
         targetIsQuick21 := False
         targetIsQuick23 := False
         targetIsQuick26 := False
@@ -902,6 +912,7 @@ class Top(
               if (useTargetAliases) {
                 targetIsAllOnes := True
                 targetIsQuick3 := True
+                targetIsQuick14 := True
                 targetIsQuick21 := True
                 targetIsQuick23 := True
                 targetIsQuick26 := True
@@ -916,11 +927,13 @@ class Top(
               val targetByteIndex = (payloadCount - U(44, 7 bits)).resize(5)
               val targetMatchesAllOnes = rx.io.data === B"8'hff"
               val targetMatchesQuick3 = rx.io.data === Sha256.byteFromMsb(Quick3Target, 32, targetByteIndex)
+              val targetMatchesQuick14 = rx.io.data === Sha256.byteFromMsb(Quick14Target, 32, targetByteIndex)
               val targetMatchesQuick21 = rx.io.data === Sha256.byteFromMsb(Quick21Target, 32, targetByteIndex)
               val targetMatchesQuick23 = rx.io.data === Sha256.byteFromMsb(Quick23Target, 32, targetByteIndex)
               val targetMatchesQuick26 = rx.io.data === Sha256.byteFromMsb(Quick26Target, 32, targetByteIndex)
               val nextTargetIsAllOnes = targetIsAllOnes && targetMatchesAllOnes
               val nextTargetIsQuick3 = targetIsQuick3 && targetMatchesQuick3
+              val nextTargetIsQuick14 = targetIsQuick14 && targetMatchesQuick14
               val nextTargetIsQuick21 = targetIsQuick21 && targetMatchesQuick21
               val nextTargetIsQuick23 = targetIsQuick23 && targetMatchesQuick23
               val nextTargetIsQuick26 = targetIsQuick26 && targetMatchesQuick26
@@ -935,6 +948,7 @@ class Top(
                 }
                 targetIsAllOnes := nextTargetIsAllOnes
                 targetIsQuick3 := nextTargetIsQuick3
+                targetIsQuick14 := nextTargetIsQuick14
                 targetIsQuick21 := nextTargetIsQuick21
                 targetIsQuick23 := nextTargetIsQuick23
                 targetIsQuick26 := nextTargetIsQuick26
@@ -947,6 +961,8 @@ class Top(
                     candidateMode := CandidateAlways
                   } elsewhen(nextTargetIsQuick3) {
                     candidateMode := CandidateQuick3
+                  } elsewhen(nextTargetIsQuick14) {
+                    candidateMode := CandidateQuick14
                   } elsewhen(nextTargetIsQuick21) {
                     candidateMode := CandidateQuick21
                   } elsewhen(nextTargetIsQuick26) {

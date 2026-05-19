@@ -10,11 +10,12 @@ cd "$repo_root"
 source scripts/helpers/common.sh
 
 target="${TARGET:-tangnano20k}"
-lanes="${SPINAL_LANES:-4}"
+lanes="${SPINAL_LANES:-5}"
 shared_k="${SPINAL_SHARED_K:-1}"
 enable_echo="${SPINAL_ENABLE_ECHO:-1}"
 enable_hardcoded="${SPINAL_ENABLE_HARDCODED:-1}"
 fixed_candidate="${SPINAL_FIXED_CANDIDATE:-}"
+wide_lanes="${SPINAL_WIDE_LANES:-0}"
 
 require_command java "Install OpenJDK or run scripts/setup.sh."
 sbt="$(sbt_bin)"
@@ -32,9 +33,15 @@ tmp="$config.tmp"
   echo "enable_echo=$enable_echo"
   echo "enable_hardcoded=$enable_hardcoded"
   echo "fixed_candidate=$fixed_candidate"
+  echo "wide_lanes=$wide_lanes"
 } > "$tmp"
 
-if [[ -e "$config" ]] && cmp -s "$tmp" "$config" && [[ -e build/spinal-sim/top.v ]]; then
+if [[ -e "$config" ]] &&
+  cmp -s "$tmp" "$config" &&
+  [[ -e build/spinal-sim/top.v ]] &&
+  [[ build/spinal-sim/top.v -nt src/main/scala/tangminer/TangMiner.scala ]] &&
+  [[ build/spinal-sim/top.v -nt build.sbt ]] &&
+  [[ build/spinal-sim/top.v -nt project/build.properties ]]; then
   rm "$tmp"
   exit 0
 fi
@@ -46,5 +53,5 @@ TANGMINER_SHARED_K="$shared_k" \
 TANGMINER_ENABLE_ECHO="$enable_echo" \
 TANGMINER_ENABLE_HARDCODED="$enable_hardcoded" \
 TANGMINER_FIXED_CANDIDATE="$fixed_candidate" \
+TANGMINER_WIDE_LANES="$wide_lanes" \
   "$sbt" "runMain tangminer.GenerateSimVerilog"
-

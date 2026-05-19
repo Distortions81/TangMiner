@@ -45,7 +45,7 @@ static void usage(const char* prog) {
     fprintf(stderr,
             "usage: %s --host HOST --port PORT --user USER [--pass PASS]\n"
             "       [--serial-port PORT] [--serial-baud BAUD] [--serial-timeout-ms MS]\n"
-            "       [--fpga-target quick23|quick21|quick26|quick3]\n"
+            "       [--fpga-target quick23|quick21|quick26|quick14|quick3]\n"
             "       [--suggest-difficulty N] [--miner-name NAME] [--no-submit] [--quiet]\n",
             prog);
 }

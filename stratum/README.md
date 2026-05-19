@@ -29,6 +29,11 @@ Run the same Stratum client through the Verilated RTL UART bridge:
 scripts/mine-rtl.sh
 ```
 
+The RTL launcher benchmarks Verilator wall-clock speed first and auto-selects
+an appropriate candidate gate and suggested difficulty. Override with
+`RTL_FPGA_TARGET`, `RTL_SUGGEST_DIFFICULTY`, `RTL_BENCHMARK_SECONDS`, or
+`RTL_TARGET_SHARES_PER_MINUTE` when needed.
+
 Run an offline fake-pool smoke test through Verilator:
 
 ```sh

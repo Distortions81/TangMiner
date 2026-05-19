@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <string>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "Vtop.h"
@@ -74,6 +75,16 @@ void tick(Vtop &top, uint64_t &cycles) {
     top.clk = 1;
     top.eval();
     cycles++;
+}
+
+double monotonic_seconds() {
+    timespec ts {};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) / 1000000000.0;
+}
+
+bool arg_starts_with(const char *arg, const char *prefix) {
+    return std::strncmp(arg, prefix, std::strlen(prefix)) == 0;
 }
 
 struct UartRxDriver {
@@ -194,10 +205,22 @@ int main(int argc, char **argv) {
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
 
-    int master_fd = -1;
-    std::string slave_name = open_pty(master_fd);
-    std::printf("rtl_fpga_pty=%s\n", slave_name.c_str());
-    std::fflush(stdout);
+    double benchmark_seconds = 0.0;
+    int lane_count = 4;
+    for (int i = 1; i < argc; i++) {
+        if (arg_starts_with(argv[i], "--benchmark-seconds=")) {
+            benchmark_seconds = std::strtod(argv[i] + std::strlen("--benchmark-seconds="), nullptr);
+        } else if (std::strcmp(argv[i], "--benchmark-seconds") == 0 && i + 1 < argc) {
+            benchmark_seconds = std::strtod(argv[++i], nullptr);
+        } else if (arg_starts_with(argv[i], "--lanes=")) {
+            lane_count = std::atoi(argv[i] + std::strlen("--lanes="));
+        } else if (std::strcmp(argv[i], "--lanes") == 0 && i + 1 < argc) {
+            lane_count = std::atoi(argv[++i]);
+        }
+    }
+    if (lane_count <= 0) {
+        lane_count = 4;
+    }
 
     Vtop top;
     top.clk = 0;
@@ -205,6 +228,33 @@ int main(int argc, char **argv) {
     top.eval();
 
     uint64_t cycles = 0;
+
+    if (benchmark_seconds > 0.0) {
+        const double start = monotonic_seconds();
+        const double end = start + benchmark_seconds;
+        while (keep_running && monotonic_seconds() < end) {
+            tick(top, cycles);
+        }
+        const double elapsed = monotonic_seconds() - start;
+        const double cycles_per_second = static_cast<double>(cycles) / elapsed;
+        const double hashes_per_second = cycles_per_second * static_cast<double>(lane_count) / 64.0;
+        std::printf(
+            "rtl_benchmark seconds=%.3f cycles=%llu cycles_per_second=%.2f lane_count=%d hashes_per_second=%.2f\n",
+            elapsed,
+            static_cast<unsigned long long>(cycles),
+            cycles_per_second,
+            lane_count,
+            hashes_per_second);
+        std::fflush(stdout);
+        top.final();
+        return 0;
+    }
+
+    int master_fd = -1;
+    std::string slave_name = open_pty(master_fd);
+    std::printf("rtl_fpga_pty=%s\n", slave_name.c_str());
+    std::fflush(stdout);
+
     UartRxDriver rx_driver;
     UartTxMonitor tx_monitor;
 

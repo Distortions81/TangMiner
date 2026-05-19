@@ -147,6 +147,10 @@ bool tangminer_builder_set_fpga_target(tangminer_builder_t* builder, const char*
     if (strcmp(name, "quick3") == 0) {
         memset(builder->fpga_target, 0xff, 32);
         builder->fpga_target[0] = 0x1f;
+    } else if (strcmp(name, "quick14") == 0) {
+        memset(builder->fpga_target, 0xff, 32);
+        builder->fpga_target[0] = 0x00;
+        builder->fpga_target[1] = 0x03;
     } else if (strcmp(name, "quick21") == 0) {
         memset(builder->fpga_target, 0xff, 32);
         builder->fpga_target[0] = 0x00;

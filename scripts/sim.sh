@@ -21,8 +21,8 @@ require_command verilator "Install OSS CAD Suite or run scripts/setup.sh."
 
 export PYTHONPATH="$repo_root/scripts/tools:${PYTHONPATH:-}"
 export CLKS_PER_BIT=8
-export LANE_COUNT="${SPINAL_LANES:-4}"
-export HARDWARE_CLOCK_HZ="${HARDWARE_CLOCK_HZ:-111000000}"
+export LANE_COUNT="${SPINAL_LANES:-5}"
+export HARDWARE_CLOCK_HZ="${HARDWARE_CLOCK_HZ:-100286000}"
 
 cd sim/cocotb
 "$py" - <<'PY'
