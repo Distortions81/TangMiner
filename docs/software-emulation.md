@@ -13,9 +13,9 @@ These flows do not require a Tang Nano board. They serve different purposes:
 - `sim-cocotb-spinal` generates simulation-tuned SpinalHDL Verilog and runs the
   same cocotb UART tests against it.
 
-The Tang Nano target is board-independent for simulation. Use
-`TARGET=tangnano9k` when you want the rest of the Makefile and logs to match
-the Tang Nano 9K.
+The Tang Nano target is board-independent for simulation. The default target is
+`tangnano20k`; use `TARGET=tangnano9k` when you want the rest of the Makefile
+and logs to match the Tang Nano 9K.
 
 The current 20K hardware model is:
 
@@ -32,20 +32,12 @@ seconds on a normal machine.
 On Ubuntu 24.04, use the repo installer:
 
 ```sh
-scripts/install_ubuntu_24_04.sh
+scripts/setup.sh
 ```
 
 By default this installs Python dependencies into `.venv`, downloads sbt into
-`local/sbt`, downloads OSS CAD Suite into `local/oss-cad-suite`, and uses Tang
-Nano 9K for verification unless `--target tangnano20k` is passed. The `local/`
-directory is ignored by git.
-
-Create a local virtualenv and install the Python-side tools:
-
-```sh
-make setup-emulation
-. .venv/bin/activate
-```
+`local/sbt`, downloads OSS CAD Suite into `local/oss-cad-suite`, and verifies
+against the Tang Nano 20K target. The `local/` directory is ignored by git.
 
 This installs `cocotb` and `pyserial` into `.venv`.
 
@@ -54,34 +46,21 @@ This installs `cocotb` and `pyserial` into `.venv`.
 Run the software-only protocol smoke test:
 
 ```sh
-make emu-smoke TARGET=tangnano9k
-```
-
-The Ubuntu launcher runs this with the repo environment loaded:
-
-```sh
-scripts/launch_ubuntu_24_04.sh emu-smoke
+python scripts/tools/emulator_smoke.py
 ```
 
 Run a pseudo-terminal that behaves like a TangMiner UART device:
 
 ```sh
-scripts/run_emulator.sh
-make emu-pty TARGET=tangnano9k
-```
-
-Or through the launcher:
-
-```sh
-scripts/launch_ubuntu_24_04.sh emu-pty
+python scripts/tools/tangminer_emulator.py --board tangnano20k --pty
 ```
 
 The emulator prints a PTY path. Host software can open that path instead of
 `/dev/ttyUSB*` or `/dev/cu.usbserial-*`.
-`scripts/run_emulator.sh` also starts an automatic benchmark job after the PTY
+`tangminer_emulator.py` can also start an automatic benchmark job after the PTY
 is ready, so hashrate appears without a separate host client.
 The default reporting interval is 2 seconds; use
-`scripts/run_emulator.sh --stats-interval 1` to change it,
+`--stats-interval 1` to change it,
 `--stats-interval 0` to disable reports, or `--no-auto-benchmark` to skip the
 automatic job.
 These lines are tagged `source=hardware_estimate` by default because they report
@@ -95,16 +74,14 @@ To exercise the hardware mining loop without a board, start the PTY emulator
 without its automatic benchmark and point `hardware_mine.py` at the printed PTY:
 
 ```sh
-scripts/run_emulator.sh --no-auto-benchmark --max-nonces 1000 --stats-interval 0
-python scripts/hardware_mine.py --target quick3 --count 3 /dev/pts/N
-make hardware-mine MINE_ARGS='--target quick3 --count 3 /dev/pts/N'
+python scripts/tools/tangminer_emulator.py --board tangnano20k --pty --no-auto-benchmark --max-nonces 1000 --stats-interval 0
+python scripts/tools/hardware_mine.py --target quick3 --count 3 /dev/pts/N
 ```
 
 For a pure software candidate test, use:
 
 ```sh
-python scripts/software_mine_test.py --count 10
-make software-mine MINE_ARGS='--count 10'
+python scripts/tools/software_mine_test.py --count 10
 ```
 
 The software test defaults to `quick14` and a `6 kH/s` software estimate, which
@@ -119,7 +96,7 @@ useful for frequent logs; use `quick23` or `quick26` for quieter candidate
 output:
 
 ```sh
-make hardware-mine MINE_ARGS='--target quick21 --count 10 /dev/cu.usbserial-*'
+python scripts/tools/hardware_mine.py --target quick21 --count 10 /dev/cu.usbserial-*
 ```
 
 ## RTL Simulation With Cocotb
@@ -132,24 +109,16 @@ project:
 source "$HOME/oss-cad-suite/environment"
 ```
 
-Run the top-level UART tests against the hand-written Verilog:
+Run the top-level UART tests against the SpinalHDL-generated RTL:
 
 ```sh
-make sim-cocotb TARGET=tangnano9k SIM=verilator
+scripts/sim.sh
 ```
 
-Or through the Ubuntu launcher, which automatically activates `.venv` and
-sources `local/oss-cad-suite/environment` when present:
+The lower-level cocotb make targets still support Icarus if needed:
 
 ```sh
-scripts/launch_ubuntu_24_04.sh sim-cocotb
-```
-
-Use Icarus instead if that is the simulator you have installed:
-
-```sh
-make sim-cocotb TARGET=tangnano9k SIM=icarus
-scripts/launch_ubuntu_24_04.sh --sim icarus sim-cocotb
+make sim-cocotb SIM=icarus
 ```
 
 The cocotb tests drive real UART bits into `uart_rx_pin`, read real UART bits
@@ -171,8 +140,7 @@ If Java and sbt are installed, generate simulation-tuned SpinalHDL Verilog and
 run the same cocotb tests:
 
 ```sh
-make sim-cocotb-spinal TARGET=tangnano9k SIM=verilator
-scripts/launch_ubuntu_24_04.sh sim-cocotb-spinal
+scripts/sim.sh
 ```
 
 This uses `GenerateSimVerilog`, which keeps the production top-level ports but

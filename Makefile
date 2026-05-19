@@ -77,7 +77,9 @@ SPINAL_CONFIG := $(SPINAL_DIR)/.config
 SPINAL_SIM_CONFIG := $(dir $(SPINAL_SIM_SRC)).config
 SPINAL_PREFIX := $(BUILD)/tangminer_spinal_$(TARGET)
 VERILOG_PREFIX := $(BUILD)/tangminer_verilog_$(TARGET)
-OSS_CAD_SUITE ?= $(HOME)/oss-cad-suite
+VERILATOR_PTY_DIR := $(BUILD)/verilator-pty
+VERILATOR_PTY_BIN := $(VERILATOR_PTY_DIR)/Vtop
+OSS_CAD_SUITE ?= $(if $(wildcard local/oss-cad-suite/bin),$(abspath local/oss-cad-suite),$(HOME)/oss-cad-suite)
 TOOLBIN := $(OSS_CAD_SUITE)/bin
 YOSYS := $(TOOLBIN)/yosys
 NEXTPNR := $(TOOLBIN)/nextpnr-himbaechel
@@ -85,7 +87,7 @@ GOWIN_PACK := $(TOOLBIN)/gowin_pack
 OPENFPGALOADER := $(TOOLBIN)/openFPGALoader
 IVERILOG := $(TOOLBIN)/iverilog
 VVP := $(TOOLBIN)/vvp
-SBT ?= sbt
+SBT ?= $(if $(wildcard local/sbt/bin/sbt),$(abspath local/sbt/bin/sbt),sbt)
 BOOTSTRAP_PYTHON ?= python3
 PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,$(if $(wildcard .venv/bin/python),.venv/bin/python,python3))
 SIM ?= verilator
@@ -96,7 +98,7 @@ SWEEP_ARGS ?=
 SPINAL_CLOCK_HZ ?= $(shell $(PYTHON) -c 'print(int(round(float("$(SPINAL_CLOCK_MHZ)") * 1000000)))')
 SPINAL_CYCLES_PER_NONCE ?= $(shell $(PYTHON) -c 'print(64.0 / float("$(SPINAL_LANES)"))')
 
-.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal sweep-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine stratum-client stratum-test stratum-mine-software stratum-mine-hardware check-cocotb sim-cocotb sim-cocotb-spinal FORCE
+.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal sweep-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-legacy sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine mine mine-software mine-rtl mine-hardware stratum-client stratum-test stratum-mine-software stratum-mine-rtl stratum-mine-hardware check-cocotb sim-cocotb sim-cocotb-spinal verilator-pty FORCE
 
 all: build
 
@@ -153,9 +155,13 @@ $(SPINAL_SIM_CONFIG): FORCE | $(BUILD)/.dir
 
 $(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_CONFIG) | $(BUILD)/.dir
 	mkdir -p $(SPINAL_DIR)
+	@command -v java >/dev/null 2>&1 || { echo "java is not on PATH. Install OpenJDK or run: scripts/setup.sh"; exit 127; }
+	@command -v "$(SBT)" >/dev/null 2>&1 || { echo "sbt is not on PATH. Install sbt or run: scripts/setup.sh"; exit 127; }
 	TANGMINER_VERILOG_DIR=$(SPINAL_DIR) TANGMINER_USE_PLL=$(SPINAL_USE_PLL) TANGMINER_CLOCK_PROFILE=$(SPINAL_CLOCK_PROFILE) TANGMINER_CLKS_PER_BIT=$(SPINAL_CLKS_PER_BIT) TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) TANGMINER_WIDE_LANES=$(SPINAL_WIDE_LANES) $(SBT) "runMain tangminer.GenerateVerilog"
 
 $(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_SIM_CONFIG) | $(BUILD)/.dir
+	@command -v java >/dev/null 2>&1 || { echo "java is not on PATH. Install OpenJDK or run: scripts/setup.sh"; exit 127; }
+	@command -v "$(SBT)" >/dev/null 2>&1 || { echo "sbt is not on PATH. Install sbt or run: scripts/setup.sh"; exit 127; }
 	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) TANGMINER_WIDE_LANES=$(SPINAL_WIDE_LANES) $(SBT) "runMain tangminer.GenerateSimVerilog"
 
 $(VERILOG_PREFIX).json: $(SRC) | $(BUILD)/.dir
@@ -192,7 +198,9 @@ flash-verilog: $(VERILOG_PREFIX).fs
 flash-spinal: $(SPINAL_PREFIX).fs
 	$(OPENFPGALOADER) -b $(BOARD) -f $<
 
-sim: sim-sha sim-bitcoin
+sim: sim-cocotb-spinal
+
+sim-legacy: sim-sha sim-bitcoin
 
 sim-sha: | $(BUILD)/.dir
 	$(IVERILOG) -g2012 -o $(BUILD)/tb_sha256_compress sim/tb_sha256_compress.v src/sha256_compress.v
@@ -207,25 +215,36 @@ setup-emulation:
 	. .venv/bin/activate && pip install -r requirements-emulation.txt
 
 install-ubuntu:
-	scripts/install_ubuntu_24_04.sh --target $(TARGET)
+	scripts/setup.sh
 
 launch:
-	scripts/launch_ubuntu_24_04.sh --target $(TARGET)
+	scripts/sim.sh
 
 emu-smoke:
-	$(PYTHON) scripts/emulator_smoke.py
+	$(PYTHON) scripts/tools/emulator_smoke.py
 
 emu-pty:
-	$(PYTHON) scripts/tangminer_emulator.py --board $(EMU_TARGET) --pty $(EMU_ARGS)
+	$(PYTHON) scripts/tools/tangminer_emulator.py --board $(EMU_TARGET) --pty $(EMU_ARGS)
 
 software-mine:
-	$(PYTHON) scripts/software_mine_test.py $(MINE_ARGS)
+	$(PYTHON) scripts/tools/software_mine_test.py $(MINE_ARGS)
 
 hardware-mine:
-	$(PYTHON) scripts/hardware_mine.py $(MINE_ARGS)
+	$(PYTHON) scripts/tools/hardware_mine.py $(MINE_ARGS)
+
+mine: mine-software
+
+mine-software:
+	scripts/mine-software.sh
+
+mine-rtl:
+	scripts/mine-rtl.sh
+
+mine-hardware:
+	scripts/mine-hardware.sh "$(SERIAL_PORT)"
 
 sweep-spinal:
-	$(PYTHON) scripts/sweep_spinal_variants.py $(SWEEP_ARGS)
+	$(PYTHON) scripts/tools/sweep_spinal_variants.py $(SWEEP_ARGS)
 
 stratum-client:
 	$(MAKE) -C stratum
@@ -233,14 +252,30 @@ stratum-client:
 stratum-test:
 	$(MAKE) -C stratum test
 
+stratum-smoke-rtl: stratum-client verilator-pty
+	$(PYTHON) stratum/tools/smoke_fake_stack.py --backend rtl --timeout 15
+
 stratum-mine-software: stratum-client
-	scripts/stratum_mine.sh software
+	scripts/helpers/stratum_mine.sh software
+
+stratum-mine-rtl: stratum-client verilator-pty
+	scripts/helpers/stratum_mine.sh rtl
 
 stratum-mine-hardware: stratum-client
-	scripts/stratum_mine.sh hardware "$(SERIAL_PORT)"
+	scripts/helpers/stratum_mine.sh hardware "$(SERIAL_PORT)"
+
+verilator-pty: $(VERILATOR_PTY_BIN)
+
+$(VERILATOR_PTY_BIN): $(SPINAL_SIM_SRC) sim/verilator_uart_pty.cpp
+	mkdir -p $(VERILATOR_PTY_DIR)
+	PATH="$(TOOLBIN):$$PATH" verilator --cc --exe --build \
+	  --Mdir $(VERILATOR_PTY_DIR) \
+	  -top-module top \
+	  -CFLAGS "-DCLKS_PER_BIT=8" \
+	  $(SPINAL_SIM_SRC) sim/verilator_uart_pty.cpp
 
 check-cocotb:
-	@$(PYTHON) -c "import cocotb" >/dev/null 2>&1 || { echo "cocotb is not installed. Run: make setup-emulation && . .venv/bin/activate"; exit 1; }
+	@$(PYTHON) -c "import cocotb" >/dev/null 2>&1 || { echo "cocotb is not installed. Run: scripts/setup.sh"; exit 1; }
 	@if [ "$(SIM)" = "verilator" ]; then PATH="$(TOOLBIN):$$PATH"; if ! command -v verilator >/dev/null 2>&1; then echo "verilator is not on PATH. Install OSS CAD Suite or your distro's verilator package."; exit 127; fi; fi
 	@if [ "$(SIM)" = "icarus" ]; then PATH="$(TOOLBIN):$$PATH"; if ! command -v iverilog >/dev/null 2>&1 || ! command -v vvp >/dev/null 2>&1; then echo "iverilog/vvp are not on PATH. Install OSS CAD Suite or Icarus Verilog."; exit 127; fi; fi
 

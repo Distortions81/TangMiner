@@ -20,6 +20,6 @@ VERILOG_SOURCES := $(RTL_SOURCES)
 COMPILE_ARGS += $(EXTRA_COMPILE_ARGS)
 
 export CLKS_PER_BIT
-export PYTHONPATH := $(PROJECT_ROOT)/scripts:$(PYTHONPATH)
+export PYTHONPATH := $(PROJECT_ROOT)/scripts/tools:$(PYTHONPATH)
 
 include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim

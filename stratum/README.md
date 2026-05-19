@@ -20,18 +20,30 @@ make -C stratum smoke-fakes
 Run the software FPGA emulator against the pool at about `5 kH/s`:
 
 ```sh
-make stratum-mine-software
+scripts/mine-software.sh
+```
+
+Run the same Stratum client through the Verilated RTL UART bridge:
+
+```sh
+scripts/mine-rtl.sh
+```
+
+Run an offline fake-pool smoke test through Verilator:
+
+```sh
+python stratum/tools/smoke_fake_stack.py --backend rtl
 ```
 
 This uses the `quick3` software FPGA gate and suggests difficulty
 `0.0000046566`, which targets about `15` shares/minute at `5 kH/s`.
 It hides `share=no` candidate spam by default; use
-`VERBOSE=1 make stratum-mine-software` to print every candidate.
+`VERBOSE=1 scripts/mine-software.sh` or `VERBOSE=1 scripts/mine-rtl.sh` to print every candidate.
 
 Run a normal mining session against a TangMiner UART device:
 
 ```sh
-make stratum-mine-hardware SERIAL_PORT=/dev/ttyUSB0
+scripts/mine-hardware.sh /dev/ttyUSB0
 ```
 
 For manual hardware runs:

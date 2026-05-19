@@ -9,15 +9,14 @@ four-lane design is focused on the 20K.
 Install or activate the FPGA and Python tools:
 
 ```sh
-source "$HOME/oss-cad-suite/environment"
-make setup-emulation
+scripts/setup.sh
 ```
 
 On Ubuntu 24.04, the repo installer can provision local ignored copies of OSS
 CAD Suite and sbt:
 
 ```sh
-scripts/install_ubuntu_24_04.sh --target tangnano20k
+scripts/setup.sh
 ```
 
 ## 2. Verify The Host-Side Model
@@ -25,14 +24,14 @@ scripts/install_ubuntu_24_04.sh --target tangnano20k
 Run the protocol smoke test before touching hardware:
 
 ```sh
-make emu-smoke TARGET=tangnano9k
+make emu-smoke
 ```
 
 Run the UART-level SpinalHDL RTL test when Java, sbt, and Verilator are
 available:
 
 ```sh
-make sim-cocotb-spinal TARGET=tangnano9k SIM=verilator
+scripts/sim.sh
 ```
 
 The SpinalHDL cocotb run should include a `source=rtl_cycles` hashrate line.
@@ -88,8 +87,8 @@ The FPGA UART is `115200 8N1`.
 
 ```sh
 . .venv/bin/activate
-python scripts/serial_smoke.py --echo --timeout 2 /dev/cu.usbserial-*
-python scripts/serial_smoke.py --timeout 3 /dev/cu.usbserial-*
+python scripts/tools/serial_smoke.py --echo --timeout 2 /dev/cu.usbserial-*
+python scripts/tools/serial_smoke.py --timeout 3 /dev/cu.usbserial-*
 ```
 
 The echo command should report `ECHO OK`. The hash command sends an easy
@@ -108,7 +107,7 @@ The important early check is endian correctness:
 For frequent candidate output on the default 20K bitstream:
 
 ```sh
-python scripts/serial_smoke.py --target quick23 --watch --timeout 10 /dev/cu.usbserial-*
+python scripts/tools/serial_smoke.py --target quick23 --watch --timeout 10 /dev/cu.usbserial-*
 make hardware-mine MINE_ARGS='--target quick21 --count 5 /dev/cu.usbserial-*'
 ```
 

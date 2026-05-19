@@ -22,7 +22,7 @@ make -C stratum smoke-fakes
 Normal UART mining:
 
 ```sh
-make stratum-mine-hardware SERIAL_PORT=/dev/ttyUSB0
+scripts/mine-hardware.sh /dev/ttyUSB0
 ```
 
 Manual equivalent:
@@ -37,11 +37,18 @@ stratum/build/stratum-client \
   --fpga-target quick21
 ```
 
-Software-emulated mining at about `5 kH/s`. Start the emulator in one terminal
-and leave it running:
+Software-emulated mining at about `5 kH/s`. This starts the fake FPGA and the
+Stratum client together:
 
 ```sh
-make stratum-mine-software
+scripts/mine-software.sh
+```
+
+RTL-emulated mining uses Verilator and the same UART protocol:
+
+```sh
+scripts/mine-rtl.sh
+python stratum/tools/smoke_fake_stack.py --backend rtl
 ```
 
 Manual equivalent:

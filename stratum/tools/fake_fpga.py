@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "tools"))
 
 from make_job import QUICK3_TARGET, QUICK21_TARGET, QUICK23_TARGET, QUICK26_TARGET  # noqa: E402
 from tangminer_emulator import TangMinerEmulator  # noqa: E402

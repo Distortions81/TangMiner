@@ -146,7 +146,7 @@ bring-up; miner host software should use `TNJ`.
 ## Make A Job Packet
 
 ```sh
-python3 scripts/make_job.py \
+python3 scripts/tools/make_job.py \
   --header <80-byte-header-hex> \
   --target <32-byte-big-endian-target-hex|quick26|quick23|quick21|quick3|all-ones> \
   > job.bin

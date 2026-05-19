@@ -78,7 +78,7 @@ See [uart-protocol.md](uart-protocol.md) for packet layout and target aliases.
 For development without hardware, run the PTY emulator:
 
 ```sh
-scripts/run_emulator.sh --no-auto-benchmark --max-nonces 1000 --stats-interval 0
+python scripts/tools/tangminer_emulator.py --board tangnano20k --pty --no-auto-benchmark --max-nonces 1000 --stats-interval 0
 ```
 
 Then point the Mujina serial path at the printed `/dev/pts/N`.

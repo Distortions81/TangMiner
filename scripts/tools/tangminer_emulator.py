@@ -275,6 +275,7 @@ def _normalise_board(value: str) -> str:
         "tangnano90": "tangnano9k",
         "20k": "tangnano20k",
         "tn20k": "tangnano20k",
+        "tangnano20": "tangnano20k",
     }
     return aliases.get(value.lower(), value.lower())
 
@@ -334,8 +335,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Software-only TangMiner protocol emulator")
     parser.add_argument(
         "--board",
-        default="tangnano9k",
-        help="board label for logs; tangnano90 is accepted as an alias for tangnano9k",
+        default="tangnano20k",
+        help="board label for logs; 9k/tn9k and 20k/tn20k aliases are accepted",
     )
     parser.add_argument(
         "--max-nonces",

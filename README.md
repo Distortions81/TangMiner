@@ -21,37 +21,48 @@ pool work, full double-SHA256 validation, target checks, and share submission.
 selects how many SHA-256 lanes are generated. More lanes use more FPGA area and
 increase modeled hashrate; fewer lanes are the first thing to try on the 9K.
 
-## Setup
+## Quick Start
 
-On Ubuntu 24.04, use the installer. It creates `.venv`, downloads a local `sbt`,
-and installs OSS CAD Suite under ignored `local/` paths.
-
-```sh
-scripts/install_ubuntu_24_04.sh --target tangnano20k
-```
-
-For a manual setup, install or unpack OSS CAD Suite, then set up the Python
-helpers:
+On Ubuntu 24.04, set up the local tools:
 
 ```sh
-source "$HOME/oss-cad-suite/environment"
-make setup-emulation
+scripts/setup.sh
 ```
 
-The Makefile expects OSS CAD Suite at `$HOME/oss-cad-suite` by default. Override
-it when needed:
+Run the RTL simulator:
 
 ```sh
-make build OSS_CAD_SUITE=/path/to/oss-cad-suite
+scripts/sim.sh
 ```
 
-Main tools used by the repo:
+Mine without hardware:
 
-- OSS CAD Suite: Yosys, nextpnr-himbaechel, gowin_pack, Verilator, Icarus
-  Verilog, openFPGALoader.
-- OpenJDK and `sbt` for SpinalHDL generation.
-- Python 3 with `cocotb` and `pyserial` for simulation and UART helpers.
-- A C compiler and `make` for the Stratum client in `stratum/`.
+```sh
+scripts/mine-software.sh
+```
+
+Mine through the real RTL without hardware:
+
+```sh
+scripts/mine-rtl.sh
+```
+
+Mine with a Tang Nano board:
+
+```sh
+scripts/mine-hardware.sh /dev/ttyUSB0
+```
+
+The software path uses a Python fake FPGA. The RTL path uses Verilator and the
+SpinalHDL-generated UART design. The hardware path uses a real serial port.
+
+## Setup Details
+
+`scripts/setup.sh` creates `.venv`, downloads local `sbt`, and installs OSS CAD
+Suite under ignored `local/` paths on Ubuntu 24.04.
+
+Main tools used by the repo are OSS CAD Suite, OpenJDK, `sbt`, Python 3,
+`cocotb`, `pyserial`, and a C compiler.
 
 ## Build
 
@@ -181,27 +192,22 @@ choose uart
 
 ## Test
 
-Run the fast software and Stratum tests:
+Run the software protocol smoke test:
 
 ```sh
-make setup-emulation
-make emu-smoke
-make -C stratum
-make -C stratum test
-make -C stratum smoke-fakes
+python scripts/tools/emulator_smoke.py
 ```
 
 Run cocotb against SpinalHDL-generated RTL:
 
 ```sh
-make sim-cocotb-spinal TARGET=tangnano20k SIM=verilator
-make sim-cocotb-spinal TARGET=tangnano9k SPINAL_LANES=1 SIM=verilator
+scripts/sim.sh
 ```
 
 Run the legacy Verilog tests:
 
 ```sh
-make sim
+make sim-legacy
 ```
 
 ## Software Emulation
@@ -210,7 +216,19 @@ Use this before connecting hardware. It starts a fake FPGA UART, runs the C
 Stratum client, validates candidates, and mines against the default pool.
 
 ```sh
-make stratum-mine-software
+scripts/mine-software.sh
+```
+
+To test the real RTL without a board, use the Verilator-backed UART bridge:
+
+```sh
+scripts/mine-rtl.sh
+```
+
+For an offline RTL smoke test against a local fake pool:
+
+```sh
+python stratum/tools/smoke_fake_stack.py --backend rtl
 ```
 
 Defaults:
@@ -220,7 +238,7 @@ Defaults:
 - Software FPGA filter: `quick3`
 - Suggested difficulty: `0.0000046566`
 
-Use `VERBOSE=1 make stratum-mine-software` to print every candidate. Use
+Use `VERBOSE=1 scripts/mine-software.sh` or `VERBOSE=1 scripts/mine-rtl.sh` to print every candidate. Use
 `--no-submit` with `stratum/build/stratum-client` when manually testing without
 submitting shares.
 
@@ -232,7 +250,7 @@ UART:
 ```sh
 make build TARGET=tangnano20k
 make load TARGET=tangnano20k
-make stratum-mine-hardware SERIAL_PORT=/dev/ttyUSB0
+scripts/mine-hardware.sh /dev/ttyUSB0
 ```
 
 The hardware wrapper defaults to the `quick21` FPGA candidate filter. The board
@@ -241,8 +259,8 @@ UART is fixed at `115200 8N1`.
 For a simple UART smoke test:
 
 ```sh
-python scripts/serial_smoke.py --echo --timeout 2 /dev/ttyUSB0
-python scripts/serial_smoke.py --target quick23 --watch --timeout 10 /dev/ttyUSB0
+python scripts/tools/serial_smoke.py --echo --timeout 2 /dev/ttyUSB0
+python scripts/tools/serial_smoke.py --target quick23 --watch --timeout 10 /dev/ttyUSB0
 ```
 
 ## Project Layout
@@ -250,7 +268,9 @@ python scripts/serial_smoke.py --target quick23 --watch --timeout 10 /dev/ttyUSB
 - `src/main/scala/tangminer/TangMiner.scala`: active SpinalHDL implementation.
 - `src/*.v`: legacy hand-written Verilog.
 - `constr/`: Tang Nano board constraints.
-- `scripts/`: setup, emulation, UART smoke tests, and hardware mining helpers.
+- `scripts/*.sh`: main user-facing bash scripts.
+- `scripts/helpers/`: lower-level shell helpers used by Makefile targets.
+- `scripts/tools/`: emulation, UART smoke tests, and utility tools.
 - `stratum/`: C Stratum client and fake pool/FPGA test tools.
 - `sim/cocotb/`: UART-level RTL tests.
 - `docs/`: detailed protocol, hardware, emulation, and bring-up notes.
