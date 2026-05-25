@@ -47,7 +47,7 @@ runner.test(
         "PYTHONPATH": f"{repo / 'scripts' / 'tools'}:{os.environ.get('PYTHONPATH', '')}",
         "CLKS_PER_BIT": os.environ.get("CLKS_PER_BIT", "8"),
         "LANE_COUNT": os.environ.get("LANE_COUNT", "4"),
-        "HARDWARE_CLOCK_HZ": os.environ.get("HARDWARE_CLOCK_HZ", "111000000"),
+        "HARDWARE_CLOCK_HZ": os.environ.get("HARDWARE_CLOCK_HZ", "100286000"),
     },
 )
 PY

@@ -12,9 +12,9 @@ source scripts/helpers/common.sh
 target="${TARGET:-tangnano20k}"
 lanes="${SPINAL_LANES:-5}"
 shared_k="${SPINAL_SHARED_K:-1}"
-enable_echo="${SPINAL_ENABLE_ECHO:-1}"
-enable_hardcoded="${SPINAL_ENABLE_HARDCODED:-1}"
-fixed_candidate="${SPINAL_FIXED_CANDIDATE:-}"
+enable_echo="${SPINAL_SIM_ENABLE_ECHO:-1}"
+enable_hardcoded="${SPINAL_SIM_ENABLE_HARDCODED:-1}"
+fixed_candidate="${SPINAL_SIM_FIXED_CANDIDATE:-}"
 wide_lanes="${SPINAL_WIDE_LANES:-0}"
 
 require_command java "Install OpenJDK or run scripts/setup.sh."

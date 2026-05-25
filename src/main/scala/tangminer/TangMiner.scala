@@ -705,12 +705,16 @@ class BitcoinHashWideLaneBlock(
 }
 
 class Top(
-  clksPerBit: Int = 234,
+  clksPerBit: Int = 871,
   resetCounterBits: Int = 24,
-  usePll: Boolean = false,
-  laneCount: Int = 4,
-  clockProfile: GowinClockProfile = GowinClockProfiles.byName("111m"),
-  hardwareOptions: TangMinerHardwareOptions = TangMinerHardwareOptions()
+  usePll: Boolean = true,
+  laneCount: Int = 5,
+  clockProfile: GowinClockProfile = GowinClockProfiles.byName("100m286"),
+  hardwareOptions: TangMinerHardwareOptions = TangMinerHardwareOptions(
+    enableEcho = false,
+    enableHardcodedJob = false,
+    fixedCandidateMode = Some(2)
+  )
 ) extends Component {
   require(clksPerBit > 1, "clksPerBit must leave room for UART start-bit centering")
   require(resetCounterBits > 0, "resetCounterBits must be positive")
@@ -1126,19 +1130,23 @@ object GenerateVerilog extends App {
   def envInt(names: Seq[String], default: Int): Int =
     names.collectFirst(Function.unlift(sys.env.get)).map(_.toInt).getOrElse(default)
 
-  def envOptionalInt(names: Seq[String]): Option[Int] =
-    names.collectFirst(Function.unlift(sys.env.get)).filter(_.nonEmpty).map(_.toInt)
+  def envOptionalInt(names: Seq[String], default: Option[Int] = None): Option[Int] =
+    names.collectFirst(Function.unlift(sys.env.get)) match {
+      case Some(value) if value.nonEmpty => Some(value.toInt)
+      case Some(_) => None
+      case None => default
+    }
 
   val targetDirectory = sys.env.getOrElse("TANGMINER_VERILOG_DIR", "build/spinal")
-  val usePll = envBoolean("TANGMINER_USE_PLL", default = false)
-  val clockProfile = GowinClockProfiles.byName(envString(Seq("TANGMINER_CLOCK_PROFILE", "SPINAL_CLOCK_PROFILE"), "111m"))
+  val usePll = envBoolean("TANGMINER_USE_PLL", default = true)
+  val clockProfile = GowinClockProfiles.byName(envString(Seq("TANGMINER_CLOCK_PROFILE", "SPINAL_CLOCK_PROFILE"), "100m286"))
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), clockProfile.clksPerBit)
-  val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 4)
+  val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 5)
   val hardwareOptions = TangMinerHardwareOptions(
     sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
-    enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = true),
-    enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = true),
-    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE")),
+    enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = false),
+    enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = false),
+    fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"), Some(2)),
     wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false)
   )
 
@@ -1164,7 +1172,7 @@ object GenerateSimVerilog extends App {
   def envOptionalInt(names: Seq[String]): Option[Int] =
     names.collectFirst(Function.unlift(sys.env.get)).filter(_.nonEmpty).map(_.toInt)
 
-  val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 4)
+  val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 5)
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), 8)
   val hardwareOptions = TangMinerHardwareOptions(
     sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
@@ -1180,6 +1188,7 @@ object GenerateSimVerilog extends App {
   ).generateVerilog(new Top(
     clksPerBit = clksPerBit,
     resetCounterBits = 4,
+    usePll = false,
     laneCount = laneCount,
     clockProfile = GowinClockProfiles.byName("27m"),
     hardwareOptions = hardwareOptions

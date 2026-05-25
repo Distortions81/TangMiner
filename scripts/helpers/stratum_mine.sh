@@ -42,6 +42,7 @@ cleanup() {
 usage() {
   cat <<'EOF'
 usage:
+  scripts/flash-and-mine.sh [--flash|--load] /dev/ttyUSB0
   scripts/mine-software.sh
   scripts/mine-rtl.sh
   scripts/mine-hardware.sh /dev/ttyUSB0

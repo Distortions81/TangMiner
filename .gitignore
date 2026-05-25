@@ -1,7 +1,11 @@
 build/
 target/
 .venv/
+.bloop/
+.bsp/
+.metals/
 __pycache__/
+*.class
 *.vcd
 *.fst
 results.xml

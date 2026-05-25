@@ -20,8 +20,8 @@ from tangminer_emulator import (
 
 
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
-HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "111000000"))
-LANE_COUNT = int(os.environ.get("LANE_COUNT", "4"))
+HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "100286000"))
+LANE_COUNT = int(os.environ.get("LANE_COUNT", "5"))
 
 
 def _clock(signal, period, unit):

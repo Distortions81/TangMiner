@@ -8,13 +8,8 @@ TOPLEVEL := top
 MODULE := test_top_uart
 
 CLKS_PER_BIT ?= 8
-RTL_SOURCES ?= \
-	$(PROJECT_ROOT)/src/top.v \
-	$(PROJECT_ROOT)/src/uart_rx.v \
-	$(PROJECT_ROOT)/src/uart_tx.v \
-	$(PROJECT_ROOT)/src/bitcoin_hash_core.v \
-	$(PROJECT_ROOT)/src/sha256_compress.v
-EXTRA_COMPILE_ARGS ?= -DSIM_FAST_RESET -DSIM_FAST_UART
+RTL_SOURCES ?= $(PROJECT_ROOT)/build/spinal-sim/top.v
+EXTRA_COMPILE_ARGS ?=
 
 VERILOG_SOURCES := $(RTL_SOURCES)
 COMPILE_ARGS += $(EXTRA_COMPILE_ARGS)

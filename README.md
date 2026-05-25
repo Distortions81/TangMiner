@@ -3,8 +3,12 @@
 ![TangMiner board](tangminer.png)
 
 TangMiner is an experimental Bitcoin hash engine for Sipeed Tang Nano FPGA
-boards. The active design is written in SpinalHDL/Scala, generated to Verilog,
-built with the open Gowin FPGA toolchain, and driven from a host over USB-UART.
+boards. The supported hardware path is:
+
+1. Generate the FPGA design from SpinalHDL/Scala.
+2. Build a Gowin bitstream with the open OSS CAD Suite flow.
+3. Flash or load the bitstream with `openFPGALoader`.
+4. Run the C Stratum host program over the board USB-UART.
 
 This is a learning and integration project, not an economically useful miner.
 The FPGA scans nonces and reports candidate nonces. The host handles Stratum
@@ -13,63 +17,58 @@ pool work, full double-SHA256 validation, target checks, and share submission.
 ## Supported Boards
 
 - Tang Nano 20K: default target, `TARGET=tangnano20k`.
-- Tang Nano 9K: available with `TARGET=tangnano9k`, but do not expect the
-  default four-lane 20K design to fit. Build a smaller lane count with
-  `SPINAL_LANES=1` or `SPINAL_LANES=2`.
+- Tang Nano 9K: available with `TARGET=tangnano9k`, but use a smaller lane
+  count such as `SPINAL_LANES=1` or `SPINAL_LANES=2`.
 
-`TARGET` selects the board, FPGA family, device, and constraints. `SPINAL_LANES`
-selects how many SHA-256 lanes are generated. More lanes use more FPGA area and
-increase modeled hashrate; fewer lanes are the first thing to try on the 9K.
+The current 20K default is a production-oriented 5-lane build at `100.286 MHz`
+with seed `13`, modeled at about `7.84 MH/s`:
+
+```text
+100.286 MHz * 5 lanes / 64 = 7.835 MH/s
+```
 
 ## Quick Start
 
-On Ubuntu 24.04, set up the local tools:
+Set up local tools on Ubuntu 24.04:
 
 ```sh
 scripts/setup.sh
 ```
 
-Run the RTL simulator:
+Build, flash, and run the host-side miner in one command:
 
 ```sh
-scripts/sim.sh
+scripts/flash-and-mine.sh /dev/ttyUSB0
 ```
 
-Mine without hardware:
+For a non-persistent SRAM load instead of flash:
 
 ```sh
-scripts/mine-software.sh
+scripts/flash-and-mine.sh --load /dev/ttyUSB0
 ```
 
-Mine through the real RTL without hardware:
+The same flow is exposed through Make:
 
 ```sh
-scripts/mine-rtl.sh
+make flash-and-mine SERIAL_PORT=/dev/ttyUSB0
+make load-and-mine SERIAL_PORT=/dev/ttyUSB0
 ```
 
-`mine-rtl.sh` benchmarks Verilator first, then picks an RTL-friendly candidate
-gate and Stratum suggested difficulty. Override with `RTL_FPGA_TARGET`,
-`RTL_SUGGEST_DIFFICULTY`, `RTL_BENCHMARK_SECONDS`, or
-`RTL_TARGET_SHARES_PER_MINUTE` when needed.
-
-Mine with a Tang Nano board:
+For Tang Nano 20K boards, a slower JTAG clock and explicit FTDI channel are
+often more reliable:
 
 ```sh
-scripts/mine-hardware.sh /dev/ttyUSB0
+OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000' \
+  scripts/flash-and-mine.sh /dev/ttyUSB0
 ```
 
-The software path uses a Python fake FPGA. The RTL path uses Verilator and the
-SpinalHDL-generated UART design. The hardware path uses a real serial port.
+If the 20K BL616 bridge is not in UART mode, open its console and select:
 
-## Setup Details
+```text
+choose uart
+```
 
-`scripts/setup.sh` creates `.venv`, downloads local `sbt`, and installs OSS CAD
-Suite under ignored `local/` paths on Ubuntu 24.04.
-
-Main tools used by the repo are OSS CAD Suite, OpenJDK, `sbt`, Python 3,
-`cocotb`, `pyserial`, and a C compiler.
-
-## Build
+## Build And Program Separately
 
 Build the default Tang Nano 20K bitstream:
 
@@ -77,32 +76,118 @@ Build the default Tang Nano 20K bitstream:
 make build
 ```
 
-Build explicitly for the 20K:
-
-```sh
-make build TARGET=tangnano20k
-```
-
-Build for the 9K with fewer lanes:
+Build a smaller Tang Nano 9K image:
 
 ```sh
 make build TARGET=tangnano9k SPINAL_LANES=1
-make build TARGET=tangnano9k SPINAL_LANES=2
 ```
 
-The default 20K build is the current production-oriented 5-lane configuration:
-`SPINAL_LANES=5`, `SPINAL_CLOCK_PROFILE=100m286`, `SPINAL_ENABLE_ECHO=0`,
-`SPINAL_ENABLE_HARDCODED=0`, `SPINAL_FIXED_CANDIDATE=2`, and
-`NEXTPNR_SEED=13`. It models at about `7.84 MH/s`:
+Load to SRAM:
+
+```sh
+make load
+```
+
+Flash persistently:
+
+```sh
+make flash
+```
+
+Generated bitstreams are written under `build/`, for example:
+
+- `build/tangminer_spinal_tangnano20k.fs`
+- `build/tangminer_spinal_tangnano9k.fs`
+
+Use the same `TARGET`, `SPINAL_LANES`, and clock options for `build`, `load`,
+and `flash`. If you omit them, the Makefile uses the target defaults.
+
+## Run The Host Program
+
+After the FPGA is loaded or flashed, run the C Stratum host against the board
+UART:
+
+```sh
+scripts/mine-hardware.sh /dev/ttyUSB0
+```
+
+The wrapper builds `stratum/build/stratum-client` if needed and then connects
+to the default pool. The board UART is fixed at `115200 8N1`.
+
+Useful environment overrides:
+
+```sh
+STRATUM_HOST=pool.example.com
+STRATUM_PORT=3333
+STRATUM_USER='wallet.worker'
+STRATUM_PASS=x
+HARDWARE_FPGA_TARGET=quick21
+HARDWARE_SUGGEST_DIFFICULTY=0.00646187
+NO_SUBMIT=1
+VERBOSE=1
+```
+
+Manual equivalent:
+
+```sh
+stratum/build/stratum-client \
+  --host tinyminer.m45core.com \
+  --port 3333 \
+  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
+  --pass x \
+  --serial-port /dev/ttyUSB0 \
+  --fpga-target quick21 \
+  --suggest-difficulty 0.00646187
+```
+
+## Test Without Hardware
+
+Run the UART protocol smoke test:
+
+```sh
+python scripts/tools/emulator_smoke.py
+```
+
+Mine through the Python fake FPGA and the real C Stratum host:
+
+```sh
+scripts/mine-software.sh
+```
+
+Mine through the Verilated SpinalHDL UART design:
+
+```sh
+scripts/mine-rtl.sh
+```
+
+Run the cocotb RTL simulator:
+
+```sh
+scripts/sim.sh
+```
+
+Run the C Stratum tests:
+
+```sh
+make -C stratum test
+make -C stratum smoke-fakes
+```
+
+## Bitstream Options
+
+The default 20K build uses:
 
 ```text
-100.286 MHz * 5 lanes / 64 = 7.835 MH/s
+TARGET=tangnano20k
+SPINAL_LANES=5
+SPINAL_CLOCK_PROFILE=100m286
+SPINAL_ENABLE_ECHO=0
+SPINAL_ENABLE_HARDCODED=0
+SPINAL_FIXED_CANDIDATE=2
+NEXTPNR_SEED=13
 ```
 
-This route is seed-sensitive. Local testing found seed 13 passing with about
-`116.28 MHz` Fmax, while several other seeds failed placement. If you need the
-older development-friendly 20K build with UART echo and hardcoded smoke-job
-support, build it explicitly:
+For a development-friendly image with UART echo and the hardcoded smoke job:
 
 ```sh
 make build TARGET=tangnano20k \
@@ -113,44 +198,9 @@ make build TARGET=tangnano20k \
   SPINAL_FIXED_CANDIDATE=
 ```
 
-If a 9K build fails placement, routing, or resource use, reduce `SPINAL_LANES`
-and build again.
-
-Generated bitstreams are written under `build/`, for example:
-
-- `build/tangminer_spinal_tangnano20k.fs`
-- `build/tangminer_spinal_tangnano9k.fs`
-
-The filename includes the board target, not the lane count. Keep the lane count
-in your command history or build notes when comparing bitstreams.
-
-Useful build variants:
-
-```sh
-make spinal-verilog TARGET=tangnano20k
-make spinal-verilog TARGET=tangnano9k SPINAL_LANES=1
-make build-verilog TARGET=tangnano9k
-```
-
-`build-verilog` uses the legacy hand-written Verilog path. The default `build`
-target uses the SpinalHDL design.
-
-For a smaller production-oriented 20K build at a different lane count or clock,
-remove UART echo support, remove the hardcoded smoke-test job, and fix the FPGA
-candidate filter to the Stratum wrapper's default `quick21` mode:
-
-```sh
-make build TARGET=tangnano20k \
-  SPINAL_ENABLE_ECHO=0 \
-  SPINAL_ENABLE_HARDCODED=0 \
-  SPINAL_FIXED_CANDIDATE=2
-```
-
 `SPINAL_FIXED_CANDIDATE` values are `0` for always report, `1` for `quick3`,
-`2` for `quick21`, `3` for `quick23`, `4` for `quick26`, and `5` for `quick14`. Leave it unset
-when you want the FPGA to infer the filter from target aliases in each job.
-The default `SPINAL_SHARED_K=1` shares the SHA-256 round-constant mux between
-the two compression engines in each lane.
+`2` for `quick21`, `3` for `quick23`, `4` for `quick26`, and `5` for `quick14`.
+Leave it unset when you want the FPGA to infer the filter from each job target.
 
 Modeled hashrate is:
 
@@ -158,127 +208,15 @@ Modeled hashrate is:
 clock_hz * SPINAL_LANES / 64
 ```
 
-The default 20K build uses five lanes at `100.286 MHz`, or about `7.84 MH/s`.
-A 9K build uses the direct `27 MHz` clock, so one lane is about `422 kH/s` and
-two lanes are about `844 kH/s`, before any real hardware effects.
-
-## Load Or Flash
-
-Load the bitstream to SRAM:
-
-```sh
-make load TARGET=tangnano20k
-make load TARGET=tangnano9k SPINAL_LANES=1
-```
-
-Flash it:
-
-```sh
-make flash TARGET=tangnano20k
-make flash TARGET=tangnano9k SPINAL_LANES=1
-```
-
-Use the same `TARGET` and `SPINAL_LANES` values for `build`, `load`, and
-`flash`. If you omit `SPINAL_LANES`, the Makefile uses the target default.
-
-For Tang Nano 20K boards, selecting the FTDI channel and using a slower JTAG
-clock is often more reliable:
-
-```sh
-make load TARGET=tangnano20k OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000'
-make flash TARGET=tangnano20k OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000'
-```
-
-If the 20K BL616 bridge is not in UART mode, open its console and select:
-
-```text
-choose uart
-```
-
-## Test
-
-Run the software protocol smoke test:
-
-```sh
-python scripts/tools/emulator_smoke.py
-```
-
-Run cocotb against SpinalHDL-generated RTL:
-
-```sh
-scripts/sim.sh
-```
-
-Run the legacy Verilog tests:
-
-```sh
-make sim-legacy
-```
-
-## Software Emulation
-
-Use this before connecting hardware. It starts a fake FPGA UART, runs the C
-Stratum client, validates candidates, and mines against the default pool.
-
-```sh
-scripts/mine-software.sh
-```
-
-To test the real RTL without a board, use the Verilator-backed UART bridge:
-
-```sh
-scripts/mine-rtl.sh
-```
-
-For an offline RTL smoke test against a local fake pool:
-
-```sh
-python stratum/tools/smoke_fake_stack.py --backend rtl
-```
-
-Defaults:
-
-- Pool: `tinyminer.m45core.com:3333`
-- Worker: `3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45`
-- Software FPGA filter: `quick3`
-- RTL FPGA filter: auto-selected, usually `quick14`
-- Suggested difficulty: `0.0000046566`
-
-Use `VERBOSE=1 scripts/mine-software.sh` or `VERBOSE=1 scripts/mine-rtl.sh` to print every candidate. Use
-`--no-submit` with `stratum/build/stratum-client` when manually testing without
-submitting shares.
-
-## Hardware Mining
-
-Build and load the 20K bitstream, then point the Stratum wrapper at the board
-UART:
-
-```sh
-make build TARGET=tangnano20k
-make load TARGET=tangnano20k
-scripts/mine-hardware.sh /dev/ttyUSB0
-```
-
-The hardware wrapper defaults to the `quick21` FPGA candidate filter. The board
-UART is fixed at `115200 8N1`.
-
-For a simple UART smoke test:
-
-```sh
-python scripts/tools/serial_smoke.py --echo --timeout 2 /dev/ttyUSB0
-python scripts/tools/serial_smoke.py --target quick23 --watch --timeout 10 /dev/ttyUSB0
-```
-
 ## Project Layout
 
 - `src/main/scala/tangminer/TangMiner.scala`: active SpinalHDL implementation.
-- `src/*.v`: legacy hand-written Verilog.
 - `constr/`: Tang Nano board constraints.
-- `scripts/*.sh`: main user-facing bash scripts.
-- `scripts/helpers/`: lower-level shell helpers used by Makefile targets.
-- `scripts/tools/`: emulation, UART smoke tests, and utility tools.
+- `scripts/*.sh`: main user-facing setup, simulation, flash, and mining flows.
+- `scripts/helpers/`: lower-level shell helpers used by scripts and Make.
+- `scripts/tools/`: protocol emulator, UART smoke tests, and build utilities.
 - `stratum/`: C Stratum client and fake pool/FPGA test tools.
-- `sim/cocotb/`: UART-level RTL tests.
+- `sim/cocotb/`: UART-level RTL tests against generated SpinalHDL Verilog.
 - `docs/`: detailed protocol, hardware, emulation, and bring-up notes.
 
 Start with these docs when you need more detail:
@@ -293,13 +231,9 @@ Start with these docs when you need more detail:
 - Tang Nano 20K FPGA: `GW2AR-LV18QN88C8/I7`, family `GW2A-18C`.
 - Tang Nano 9K FPGA: `GW1NR-LV9QN88PC6/I5`, family `GW1N-9C`.
 - Board clock: `27 MHz`.
-- 20K hash clock: internal rPLL to `111 MHz`.
+- 20K hash clock: internal rPLL to `100.286 MHz`.
 - 9K clock path: direct `27 MHz` board clock.
 - Protocol: binary UART packets starting with `TN`.
-
-The selected 20K build currently uses four compact SHA-256 lanes. For the 9K,
-start with one lane and only increase after nextpnr reports that placement,
-routing, timing, and utilization are acceptable.
 
 ## License
 

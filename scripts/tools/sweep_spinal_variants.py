@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PROFILES = ("90m", "100m286", "111m", "120m")
 DEFAULT_LANES = (4, 5, 6)
 PROFILE_CLOCK_MHZ = {
@@ -92,7 +92,7 @@ def build_variant(args, lanes, profile):
     cmd = [
         "make",
         "-B",
-        "build-spinal",
+        "build",
         "TARGET=tangnano20k",
         f"SPINAL_LANES={lanes}",
         f"SPINAL_CLOCK_PROFILE={profile}",

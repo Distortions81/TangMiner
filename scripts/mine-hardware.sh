@@ -10,9 +10,9 @@ serial_port="${1:-${SERIAL_PORT:-}}"
 if [[ -z "$serial_port" ]]; then
   echo "missing serial port" >&2
   echo "usage: scripts/mine-hardware.sh /dev/ttyUSB0" >&2
+  echo "to build, program, and mine: scripts/flash-and-mine.sh /dev/ttyUSB0" >&2
   exit 2
 fi
 
 scripts/helpers/build_stratum_client.sh
 exec scripts/helpers/stratum_mine.sh hardware "$serial_port"
-

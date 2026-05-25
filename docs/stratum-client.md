@@ -25,6 +25,12 @@ Normal UART mining:
 scripts/mine-hardware.sh /dev/ttyUSB0
 ```
 
+Build, program, and run the same host in one step:
+
+```sh
+scripts/flash-and-mine.sh /dev/ttyUSB0
+```
+
 Manual equivalent:
 
 ```sh
@@ -162,11 +168,8 @@ state, job sequence numbers, clock status, or nonce-range completion.
 
 - Plain TCP only.
 - No reconnect loop.
-- No share queue.
 - JSON support is intentionally narrow and assumes normal Stratum server
   formatting without escaped strings in job fields.
-- The CLI blocks in the job callback while waiting for one FPGA candidate, which
-  is acceptable for the first UART path but should become an event loop or task
 - The PC CLI now has a network thread and UART worker thread. This is close to
   the ESP32 task shape, but the thread/queue glue is still POSIX-specific and
   should be ported to FreeRTOS queues/task notifications for ESP32.

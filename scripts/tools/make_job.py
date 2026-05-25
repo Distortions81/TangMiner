@@ -140,7 +140,7 @@ def parse_target(value):
         return QUICK14_TARGET
     if name in ("quick21", "quick-21"):
         return QUICK21_TARGET
-    if name in ("quick23", "quick-23", "10s", "ten-second", "ten-seconds", "10s4", "ten-second-4-lane", "ten-seconds-4-lane"):
+    if name in ("quick23", "quick-23", "10s", "ten-second", "ten-seconds"):
         return QUICK23_TARGET
     if name in ("quick26", "quick-26"):
         return QUICK26_TARGET

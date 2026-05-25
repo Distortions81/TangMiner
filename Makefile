@@ -69,14 +69,12 @@ YOSYS_SYNTH_ARGS ?=
 NEXTPNR_SEED_ARG := $(if $(NEXTPNR_SEED),--seed $(NEXTPNR_SEED),)
 TOP := top
 BUILD := build
-SRC := src/top.v src/uart_rx.v src/uart_tx.v src/bitcoin_hash_core.v src/sha256_compress.v
 SPINAL_DIR := $(BUILD)/spinal/$(TARGET)
 SPINAL_SRC := $(SPINAL_DIR)/top.v
 SPINAL_SIM_SRC := $(BUILD)/spinal-sim/top.v
 SPINAL_CONFIG := $(SPINAL_DIR)/.config
 SPINAL_SIM_CONFIG := $(dir $(SPINAL_SIM_SRC)).config
 SPINAL_PREFIX := $(BUILD)/tangminer_spinal_$(TARGET)
-VERILOG_PREFIX := $(BUILD)/tangminer_verilog_$(TARGET)
 VERILATOR_PTY_DIR := $(BUILD)/verilator-pty
 VERILATOR_PTY_BIN := $(VERILATOR_PTY_DIR)/Vtop
 OSS_CAD_SUITE ?= $(if $(wildcard local/oss-cad-suite/bin),$(abspath local/oss-cad-suite),$(HOME)/oss-cad-suite)
@@ -85,28 +83,26 @@ YOSYS := $(TOOLBIN)/yosys
 NEXTPNR := $(TOOLBIN)/nextpnr-himbaechel
 GOWIN_PACK := $(TOOLBIN)/gowin_pack
 OPENFPGALOADER := $(TOOLBIN)/openFPGALoader
-IVERILOG := $(TOOLBIN)/iverilog
-VVP := $(TOOLBIN)/vvp
 SBT ?= $(if $(wildcard local/sbt/bin/sbt),$(abspath local/sbt/bin/sbt),sbt)
 BOOTSTRAP_PYTHON ?= python3
 PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,$(if $(wildcard .venv/bin/python),.venv/bin/python,python3))
 SIM ?= verilator
 EMU_TARGET ?= $(TARGET)
 EMU_ARGS ?=
-MINE_ARGS ?=
 SWEEP_ARGS ?=
 SPINAL_CLOCK_HZ ?= $(shell $(PYTHON) -c 'print(int(round(float("$(SPINAL_CLOCK_MHZ)") * 1000000)))')
 SPINAL_CYCLES_PER_NONCE ?= $(shell $(PYTHON) -c 'print(64.0 / float("$(SPINAL_LANES)"))')
+SPINAL_SIM_ENABLE_ECHO ?= 1
+SPINAL_SIM_ENABLE_HARDCODED ?= 1
+SPINAL_SIM_FIXED_CANDIDATE ?=
 
-.PHONY: all build build-verilog spinal-verilog spinal-sim-verilog build-spinal sweep-spinal load load-verilog load-spinal flash flash-verilog flash-spinal clean sim sim-legacy sim-sha sim-bitcoin setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine mine mine-software mine-rtl mine-hardware stratum-client stratum-test stratum-mine-software stratum-mine-rtl stratum-mine-hardware check-cocotb sim-cocotb sim-cocotb-spinal verilator-pty FORCE
+.PHONY: all build build-spinal spinal-verilog spinal-sim-verilog sweep-spinal load flash flash-and-mine load-and-mine clean sim setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine mine mine-software mine-rtl mine-hardware stratum-client stratum-test stratum-mine-software stratum-mine-rtl stratum-mine-hardware stratum-smoke-rtl check-cocotb sim-cocotb verilator-pty FORCE
 
 all: build
 
-build: build-spinal
+build: $(SPINAL_PREFIX).fs
 
-build-verilog: $(VERILOG_PREFIX).fs
-
-build-spinal: $(SPINAL_PREFIX).fs
+build-spinal: build
 
 spinal-verilog: $(SPINAL_SRC)
 
@@ -146,9 +142,9 @@ $(SPINAL_SIM_CONFIG): FORCE | $(BUILD)/.dir
 	  echo "lanes=$(SPINAL_LANES)"; \
 	  echo "clks_per_bit=8"; \
 	  echo "shared_k=$(SPINAL_SHARED_K)"; \
-	  echo "enable_echo=$(SPINAL_ENABLE_ECHO)"; \
-	  echo "enable_hardcoded=$(SPINAL_ENABLE_HARDCODED)"; \
-	  echo "fixed_candidate=$(SPINAL_FIXED_CANDIDATE)"; \
+	  echo "enable_echo=$(SPINAL_SIM_ENABLE_ECHO)"; \
+	  echo "enable_hardcoded=$(SPINAL_SIM_ENABLE_HARDCODED)"; \
+	  echo "fixed_candidate=$(SPINAL_SIM_FIXED_CANDIDATE)"; \
 	  echo "wide_lanes=$(SPINAL_WIDE_LANES)"; \
 	} > "$$tmp"; \
 	if ! cmp -s "$$tmp" "$@"; then mv "$$tmp" "$@"; else rm "$$tmp"; fi
@@ -162,16 +158,7 @@ $(SPINAL_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.
 $(SPINAL_SIM_SRC): src/main/scala/tangminer/TangMiner.scala build.sbt project/build.properties $(SPINAL_SIM_CONFIG) | $(BUILD)/.dir
 	@command -v java >/dev/null 2>&1 || { echo "java is not on PATH. Install OpenJDK or run: scripts/setup.sh"; exit 127; }
 	@command -v "$(SBT)" >/dev/null 2>&1 || { echo "sbt is not on PATH. Install sbt or run: scripts/setup.sh"; exit 127; }
-	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_FIXED_CANDIDATE) TANGMINER_WIDE_LANES=$(SPINAL_WIDE_LANES) $(SBT) "runMain tangminer.GenerateSimVerilog"
-
-$(VERILOG_PREFIX).json: $(SRC) | $(BUILD)/.dir
-	$(YOSYS) -p "read_verilog $(SRC); $(YOSYS_PRE_SYNTH_CMDS) synth_gowin $(YOSYS_SYNTH_ARGS) -top $(TOP) -json $@"
-
-$(VERILOG_PREFIX)_pnr.json: $(VERILOG_PREFIX).json $(CST)
-	$(NEXTPNR) --json $< --write $@ --freq 27 --device $(DEVICE) -o family=$(FAMILY) -o cst=$(CST) $(NEXTPNR_SEED_ARG)
-
-$(VERILOG_PREFIX).fs: $(VERILOG_PREFIX)_pnr.json
-	$(GOWIN_PACK) -d $(FAMILY) -o $@ $<
+	TANGMINER_LANES=$(SPINAL_LANES) TANGMINER_CLKS_PER_BIT=8 TANGMINER_SHARED_K=$(SPINAL_SHARED_K) TANGMINER_ENABLE_ECHO=$(SPINAL_SIM_ENABLE_ECHO) TANGMINER_ENABLE_HARDCODED=$(SPINAL_SIM_ENABLE_HARDCODED) TANGMINER_FIXED_CANDIDATE=$(SPINAL_SIM_FIXED_CANDIDATE) TANGMINER_WIDE_LANES=$(SPINAL_WIDE_LANES) $(SBT) "runMain tangminer.GenerateSimVerilog"
 
 $(SPINAL_PREFIX).json: $(SPINAL_SRC) | $(BUILD)/.dir
 	$(YOSYS) -p "read_verilog $(SPINAL_SRC); $(YOSYS_PRE_SYNTH_CMDS) synth_gowin $(YOSYS_SYNTH_ARGS) -top $(TOP) -json $@"
@@ -182,33 +169,19 @@ $(SPINAL_PREFIX)_pnr.json: $(SPINAL_PREFIX).json $(CST)
 $(SPINAL_PREFIX).fs: $(SPINAL_PREFIX)_pnr.json
 	$(GOWIN_PACK) -d $(FAMILY) -o $@ $<
 
-load: load-spinal
-
-load-verilog: $(VERILOG_PREFIX).fs
+load: $(SPINAL_PREFIX).fs
 	$(OPENFPGALOADER) -b $(BOARD) $<
 
-load-spinal: $(SPINAL_PREFIX).fs
-	$(OPENFPGALOADER) -b $(BOARD) $<
-
-flash: flash-spinal
-
-flash-verilog: $(VERILOG_PREFIX).fs
+flash: $(SPINAL_PREFIX).fs
 	$(OPENFPGALOADER) -b $(BOARD) -f $<
 
-flash-spinal: $(SPINAL_PREFIX).fs
-	$(OPENFPGALOADER) -b $(BOARD) -f $<
+flash-and-mine:
+	scripts/flash-and-mine.sh "$(SERIAL_PORT)"
 
-sim: sim-cocotb-spinal
+load-and-mine:
+	scripts/flash-and-mine.sh --load "$(SERIAL_PORT)"
 
-sim-legacy: sim-sha sim-bitcoin
-
-sim-sha: | $(BUILD)/.dir
-	$(IVERILOG) -g2012 -o $(BUILD)/tb_sha256_compress sim/tb_sha256_compress.v src/sha256_compress.v
-	$(VVP) $(BUILD)/tb_sha256_compress
-
-sim-bitcoin: | $(BUILD)/.dir
-	$(IVERILOG) -g2012 -o $(BUILD)/tb_bitcoin_hash_core sim/tb_bitcoin_hash_core.v src/bitcoin_hash_core.v src/sha256_compress.v
-	$(VVP) $(BUILD)/tb_bitcoin_hash_core
+sim: sim-cocotb
 
 setup-emulation:
 	$(BOOTSTRAP_PYTHON) -m venv .venv
@@ -226,11 +199,9 @@ emu-smoke:
 emu-pty:
 	$(PYTHON) scripts/tools/tangminer_emulator.py --board $(EMU_TARGET) --pty $(EMU_ARGS)
 
-software-mine:
-	$(PYTHON) scripts/tools/software_mine_test.py $(MINE_ARGS)
+software-mine: mine-software
 
-hardware-mine:
-	$(PYTHON) scripts/tools/hardware_mine.py $(MINE_ARGS)
+hardware-mine: mine-hardware
 
 mine: mine-software
 
@@ -279,10 +250,7 @@ check-cocotb:
 	@if [ "$(SIM)" = "verilator" ]; then PATH="$(TOOLBIN):$$PATH"; if ! command -v verilator >/dev/null 2>&1; then echo "verilator is not on PATH. Install OSS CAD Suite or your distro's verilator package."; exit 127; fi; fi
 	@if [ "$(SIM)" = "icarus" ]; then PATH="$(TOOLBIN):$$PATH"; if ! command -v iverilog >/dev/null 2>&1 || ! command -v vvp >/dev/null 2>&1; then echo "iverilog/vvp are not on PATH. Install OSS CAD Suite or Icarus Verilog."; exit 127; fi; fi
 
-sim-cocotb: check-cocotb
-	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))"
-
-sim-cocotb-spinal: $(SPINAL_SIM_SRC) check-cocotb
+sim-cocotb: $(SPINAL_SIM_SRC) check-cocotb
 	PATH="$(TOOLBIN):$$PATH" $(MAKE) -C sim/cocotb SIM=$(SIM) PYTHON_BIN="$(abspath $(PYTHON))" RTL_SOURCES="$(abspath $(SPINAL_SIM_SRC))" EXTRA_COMPILE_ARGS= CLKS_PER_BIT=8 LANE_COUNT=$(SPINAL_LANES) HARDWARE_CLOCK_HZ=$(SPINAL_CLOCK_HZ)
 
 clean:

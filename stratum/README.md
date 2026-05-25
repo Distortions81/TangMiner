@@ -51,6 +51,12 @@ Run a normal mining session against a TangMiner UART device:
 scripts/mine-hardware.sh /dev/ttyUSB0
 ```
 
+To build, program, and then run the same host in one step:
+
+```sh
+scripts/flash-and-mine.sh /dev/ttyUSB0
+```
+
 For manual hardware runs:
 
 ```sh
@@ -100,7 +106,7 @@ Useful options:
 --miner-name NAME         subscribe agent string, default TangMiner/0.1
 --serial-port PORT        enable TangMiner UART backend
 --serial-baud BAUD        default 115200
---fpga-target NAME        quick23 default; quick21/quick26/quick3
+--fpga-target NAME        quick23 default; quick21/quick26/quick14/quick3
 --no-submit               validate candidates but do not submit shares
 --quiet                   only print state changes and jobs
 ```
@@ -110,8 +116,8 @@ validation logs.
 
 ## Hashrate And Byte Order
 
-The selected Tang Nano 20K gateware runs four lanes at `111 MHz`, modeled as one
-aggregate nonce every `16` fabric clocks, or `6.94 MH/s`.
+The selected Tang Nano 20K gateware runs five lanes at `100.286 MHz`, modeled
+as one aggregate nonce every `12.8` fabric clocks, or `7.84 MH/s`.
 
 The FPGA returns `F || nonce[4]` in the byte order inserted into Bitcoin header
 bytes `76..79` for local double-SHA256 validation. Stratum submit uses the

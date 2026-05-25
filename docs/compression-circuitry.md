@@ -1,20 +1,20 @@
 # Compression Circuitry
 
-TangMiner uses four compact iterative SHA-256 lanes on the Tang Nano 20K. Each
+TangMiner uses five compact iterative SHA-256 lanes on the Tang Nano 20K. Each
 lane has two `Sha256Compress` blocks: one dedicated to the first Bitcoin
 SHA-256 pass and one dedicated to the second pass. The 64 SHA-256 rounds are
 still not unrolled; each compressor performs one round per FPGA clock.
 
-The top level gives the lanes different nonce residue classes: starts `0..3`
-and stride `4`. The diagrams below show the datapath inside one lane unless
-they explicitly call out the four-lane wrapper.
+The top level gives the lanes different nonce residue classes: starts `0..4`
+and stride `5`. The diagrams below show the datapath inside one lane unless
+they explicitly call out the lane wrapper.
 
 ## Per-Lane Nonce Flow
 
 ```mermaid
 flowchart LR
     host["Host job packet<br/>midstate[32], tail[12], target[32]"]
-    lanes["4 lane wrapper<br/>start nonce 0..3<br/>stride = 4"]
+    lanes["5 lane wrapper<br/>start nonce 0..4<br/>stride = 5"]
     regs["Lane job registers<br/>midstate, tail, candidate mode<br/>current_nonce"]
     first_block["First-pass final block<br/>tail || nonce || padding || 0x00000280"]
     comp1["First-pass Sha256Compress<br/>64 rounds from host midstate"]
@@ -23,7 +23,7 @@ flowchart LR
     comp2["Second-pass Sha256Compress<br/>64 rounds from SHA-256 IV"]
     compare["Bitcoin-order digest prefix<br/>cheap candidate check"]
     found["F response<br/>selected nonce only"]
-    next["current_nonce += 4<br/>start next first pass"]
+    next["current_nonce += 5<br/>start next first pass"]
 
     host --> lanes
     lanes --> regs
@@ -51,12 +51,12 @@ start the next nonce for the same lane. After the second pass, the lane checks
 the final digest in Bitcoin's byte-reversed proof-of-work ordering. The
 implementation only wires the needed prefix bits for the selected quick filter;
 it does not build a full 256-bit reversed digest or target comparator in the
-four-lane 20K path. The host validates the returned candidate nonce by
+20K path. The host validates the returned candidate nonce by
 rebuilding the header and double-hashing it. If more than one lane is reporting,
 the top level latches one selected result before UART transmit.
 
-For bring-up with frequent candidate output on the default `111 MHz` 20K build,
-the host tools accept the named target `quick23`:
+For bring-up with frequent candidate output on the default 5-lane `100.286 MHz`
+20K build, the host tools accept the named target `quick23`:
 
 ```text
 000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
@@ -64,9 +64,9 @@ the host tools accept the named target `quick23`:
 
 That target is equivalent to requiring the top 23 bits of the byte-reversed
 digest to be zero. The bitstream also recognizes `all-ones` for immediate smoke
-tests, `quick3` for short RTL tests, `quick21` as an easier legacy candidate
-filter, and `quick26` for quieter candidate output. Exact validation remains on
-the host.
+tests, `quick3` for short RTL tests, `quick21` for frequent candidate output,
+and `quick26` for quieter candidate output. Exact validation remains on the
+host.
 
 ## Compressor Datapath
 
@@ -214,8 +214,8 @@ sequenceDiagram
 In steady state, the first-pass compressor launches a new lane nonce every `64`
 clocks while the second-pass compressor checks the previous first digest. Each
 lane therefore produces one tested nonce every `64` clocks after the initial
-fill. With four lanes in parallel, the aggregate chip cadence is one tested
-nonce every `16` clocks.
+fill. With five lanes in parallel, the aggregate chip cadence is one tested
+nonce every `12.8` clocks.
 
 ## Source Pointers
 
@@ -223,5 +223,3 @@ nonce every `16` clocks.
 - `BitcoinHashCore` constructs the two SHA-256 blocks, sequences the compressors,
   increments the lane nonce by the configured stride, and performs the candidate
   prefix check.
-- `src/sha256_compress.v` is the legacy hand-written Verilog compressor kept for
-  comparison and simulation.

@@ -1,11 +1,13 @@
 # Optimization Matrix
 
-Snapshot date: 2026-05-18.
+Snapshot date: 2026-05-25.
 
 This note summarizes the optimization branches and local build artifacts that
-exist in this checkout. The active branch graph is:
+exist in this checkout. It keeps historical sweep data because that explains
+the current defaults. The active branch graph is:
 
-- `main` / `origin/main`: selected compact four-lane 20K design.
+- `main` / `origin/main`: selected production-trimmed 5-lane 20K design at
+  `100.286 MHz`, with `NEXTPNR_SEED=13`.
 - `width-exp` / `origin/width-exp`: experimental 61-cycle round skipping and
   wider local A/B compressor-pair lanes.
 - `origin/sram-optimize`: experimental SHA message schedule storage using
@@ -14,10 +16,28 @@ exist in this checkout. The active branch graph is:
 No `AGENTS.md` or `agents.md` file exists inside this repository at the time of
 this snapshot.
 
-## Main Baseline
+## Current Selected Build
 
-The current selected baseline is four top-level lanes, one A/B compressor pair
-per lane, full 64-cycle nonce cadence, and the 111 MHz clock profile.
+The current default build is:
+
+```text
+TARGET=tangnano20k
+SPINAL_LANES=5
+SPINAL_CLOCK_PROFILE=100m286
+SPINAL_ENABLE_ECHO=0
+SPINAL_ENABLE_HARDCODED=0
+SPINAL_FIXED_CANDIDATE=2
+NEXTPNR_SEED=13
+```
+
+It models at `7.84 MH/s`. The relevant evidence is the direct seed-13
+production result: `116.28 MHz` Fmax against the `100.286 MHz` timing target,
+about `15.9%` margin.
+
+## Historical Main Baseline
+
+The previous selected baseline was four top-level lanes, one A/B compressor
+pair per lane, full 64-cycle nonce cadence, and the 111 MHz clock profile.
 
 | Variant | Result | Modeled rate | Fmax | Margin | LUT4 | DFF | Evidence |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
@@ -32,12 +52,12 @@ per lane, full 64-cycle nonce cadence, and the 111 MHz clock profile.
 | 5 lanes, 100.286 MHz, `synth_gowin -nodffe`, seed 13 | Fail placement/overuse | 7.84 MH/s | n/a | n/a | 118% | 63% | `build/attempt-logs/normal5-100m286-nodffe-seed13.log` |
 | 5 lanes, 90 MHz, `synth_gowin -nowidelut`, seed 13 | Fail placement | 7.03 MH/s | n/a | n/a | 85% | 63% | `build/attempt-logs/normal5-90m-nowidelut-seed13.log` |
 
-Takeaway: the selected 4-lane 111 MHz build is the best proven baseline in the
-plain design. 120 MHz does not currently close timing, and a fifth plain lane
-does not place even at lower clocks. The simple synthesis knobs that were worth
-trying on production 5-lane builds do not rescue the normal untrimmed 5-lane
-build: `-nowidelut` still fails placement even at 90 MHz, `-retime` increases
-area, and disabling ABC9 or DFFE mapping badly overuses LUT4s.
+Historical takeaway: the 4-lane 111 MHz build was the best proven baseline in
+the plain design. 120 MHz did not close timing, and a fifth plain lane did not
+place even at lower clocks. The simple synthesis knobs that were worth trying on
+production 5-lane builds did not rescue the normal untrimmed 5-lane build:
+`-nowidelut` still failed placement even at 90 MHz, `-retime` increased area,
+and disabling ABC9 or DFFE mapping badly overused LUT4s.
 
 ## Production Trimming
 
@@ -150,7 +170,7 @@ Local logs show these paired-lane attempts:
 Takeaway: round skipping helps modeled rate by about 4.9% at the same clock, but
 the implementations tried so far have much worse Fmax or placement behavior
 than the plain 4-lane layout. The only round-skip result that closes timing is
-1x4 at 90 MHz, and its modeled 5.90 MH/s is worse than the current 4-lane
+1x4 at 90 MHz, and its modeled 5.90 MH/s is worse than the previous 4-lane
 111 MHz baseline. Single-pair round skip also failed in both untrimmed and
 production-trimmed trials, so the current round-skip implementation is not
 helpful without a structural timing fix.
@@ -181,10 +201,10 @@ Observed impact:
 
 | Change | Status | Result |
 | --- | --- | --- |
-| 4 plain lanes at 111 MHz | Proven | Best selected baseline: 6.94 MH/s modeled, 7.3% timing margin. |
+| 4 plain lanes at 111 MHz | Proven historical baseline | 6.94 MH/s modeled, 7.3% timing margin. |
 | Production trim with fixed candidate/no echo/no hardcoded job | Proven useful | Reduces 4-lane LUT4 from about 65% to 58%, and enables a 5-lane 90 MHz build. |
 | 5 production lanes at 90 MHz | Proven useful but marginal | 7.03 MH/s modeled, slightly above 4x111, with 13.3% timing margin. Needs functional/hardware validation before replacing baseline. |
-| 5 production lanes at 100.286 MHz with seed search | Best throughput tried, seed-sensitive | Seeds 4, 10, and 13 pass; seed 13 reaches 116.28 MHz for 7.84 MH/s modeled. Several seeds still fail placement. Needs seed lock and hardware validation. |
+| 5 production lanes at 100.286 MHz with seed search | Current default, seed-sensitive | Seeds 4, 10, and 13 pass; seed 13 reaches 116.28 MHz for 7.84 MH/s modeled. Several seeds still fail placement, so the default locks seed 13. |
 | `synth_gowin -nowidelut` on 5 production lanes | Tried, possible fallback | Seed 13 passes at 110.04 MHz with the same headline LUT/DFF percentage as baseline, but it is slower than the normal seed 13 build. |
 | 5 production lanes as one wide block | Tried, not helpful | `SPINAL_WIDE_LANES=1` increased area and failed placement for every tried comparison seed. |
 | Global `synth_gowin -noflatten` | Tried, not usable directly | Preserves hierarchy but produces JSON that nextpnr rejects during I/O packing in this flow. |
@@ -197,8 +217,8 @@ Observed impact:
 
 ## Untested Or Incomplete Combinations
 
-- Lock and validate the best 5 production lane 100.286 MHz seed result, currently
-  seed 13.
+- Continue hardware validation of the locked 5 production lane 100.286 MHz seed
+  13 result.
 - 5 production lanes at 111 MHz with seed search, if placement can be made
   reliable enough to justify trying a higher clock.
 - `origin/sram-optimize` baseline sweep at 90/100.286/120 MHz.
@@ -210,12 +230,10 @@ Observed impact:
 
 ## Recommended Next Sweep Order
 
-1. Validate the production 5-lane 100.286 MHz seed 13 bitstream functionally and
-   on hardware before promoting it. This is the current highest modeled passing
-   result.
-2. If seed 13 validates, make that seed reproducible in the build flow.
-3. Sweep `origin/sram-optimize` with production trims to see whether the DFF
+1. Continue validating the production 5-lane 100.286 MHz seed 13 bitstream on
+   hardware.
+2. Sweep `origin/sram-optimize` with production trims to see whether the DFF
    reduction can combine with the smaller control surface without exhausting
    LUTs.
-4. Pause further round-skip work until the critical path is restructured; the
+3. Pause further round-skip work until the critical path is restructured; the
    current implementation has now failed the clean single-pair checks.

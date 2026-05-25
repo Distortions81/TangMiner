@@ -1,77 +1,59 @@
 # Bring-Up
 
-This checklist is for the active Tang Nano 20K SpinalHDL bitstream. The Tang
-Nano 9K target is still useful for simulation and comparison, but the current
-four-lane design is focused on the 20K.
+This checklist is for the active Tang Nano 20K SpinalHDL bitstream and the C
+Stratum host program.
 
 ## 1. Prepare Tools
 
-Install or activate the FPGA and Python tools:
+On Ubuntu 24.04, install the local Python, sbt, and OSS CAD Suite dependencies:
 
 ```sh
 scripts/setup.sh
 ```
 
-On Ubuntu 24.04, the repo installer can provision local ignored copies of OSS
-CAD Suite and sbt:
+## 2. Verify The Host And RTL Models
+
+Run the lightweight protocol smoke test:
 
 ```sh
-scripts/setup.sh
+python scripts/tools/emulator_smoke.py
 ```
 
-## 2. Verify The Host-Side Model
-
-Run the protocol smoke test before touching hardware:
-
-```sh
-make emu-smoke
-```
-
-Run the UART-level SpinalHDL RTL test when Java, sbt, and Verilator are
-available:
+Run the UART-level RTL tests:
 
 ```sh
 scripts/sim.sh
 ```
 
-The SpinalHDL cocotb run should include a `source=rtl_cycles` hashrate line.
-For the current 20K model, the expected rate is:
+The current 20K model should report about `7.84 MH/s`:
 
 ```text
-111,000,000 Hz / 16 clocks per aggregate nonce = 6.94 MH/s
+100,286,000 Hz * 5 lanes / 64 = 7.835 MH/s
 ```
 
-## 3. Build The Bitstream
+## 3. Flash Or Load And Mine
 
-Build the default 20K target:
+For the normal persistent flow:
 
 ```sh
-make build
+scripts/flash-and-mine.sh /dev/ttyUSB0
 ```
 
-Inspect the nextpnr output for timing and resource utilization. The selected
-20K route reports `119.13 MHz` Fmax against the `111.00 MHz` hash clock
-constraint.
-
-## 4. Load Or Flash
-
-Load to SRAM for quick iteration:
+For volatile SRAM loading during iteration:
 
 ```sh
-make load
+scripts/flash-and-mine.sh --load /dev/ttyUSB0
 ```
 
-Flash for persistent boot:
+This builds the bitstream, programs the board, builds the C Stratum client if
+needed, and then runs `scripts/mine-hardware.sh` against the selected serial
+port.
+
+For Tang Nano 20K boards, this programmer command is often more reliable:
 
 ```sh
-make flash
-```
-
-For Tang Nano 20K boards, this openFPGALoader form is often more reliable:
-
-```sh
-make load OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000'
-make flash OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000'
+OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000' \
+  scripts/flash-and-mine.sh /dev/ttyUSB0
 ```
 
 If the onboard BL616 bridge was left in a non-UART mode, open its console and
@@ -81,41 +63,52 @@ select:
 choose uart
 ```
 
-## 5. Check UART And Byte Order
+## 4. Build And Program Manually
+
+Build the default 20K bitstream:
+
+```sh
+make build
+```
+
+Load to SRAM:
+
+```sh
+make load
+```
+
+Flash persistently:
+
+```sh
+make flash
+```
+
+Run the host after programming:
+
+```sh
+scripts/mine-hardware.sh /dev/ttyUSB0
+```
+
+## 5. UART Smoke Tests
 
 The FPGA UART is `115200 8N1`.
 
 ```sh
-. .venv/bin/activate
-python scripts/tools/serial_smoke.py --echo --timeout 2 /dev/cu.usbserial-*
-python scripts/tools/serial_smoke.py --timeout 3 /dev/cu.usbserial-*
+python scripts/tools/serial_smoke.py --timeout 3 /dev/ttyUSB0
+python scripts/tools/serial_smoke.py --target quick23 --watch --timeout 10 /dev/ttyUSB0
 ```
 
-The echo command should report `ECHO OK`. The hash command sends an easy
-genesis-style job, expects an `F || nonce` response, and validates the returned
-nonce by double-hashing on the host.
+The smoke test sends an easy genesis-style job, expects an `F || nonce`
+response, and validates the returned nonce by double-hashing on the host.
 
-The important early check is endian correctness:
+The endian contract is:
 
 - `midstate`, `tail`, and target aliases are sent as big-endian SHA-256 values.
 - The FPGA inserts the returned nonce bytes directly into header bytes `76..79`.
 - The host owns Bitcoin wire-format conversion, host-side double hashing, exact
   target comparison, and pool share formatting.
 
-## 6. Exercise Candidate Output
-
-For frequent candidate output on the default 20K bitstream:
-
-```sh
-python scripts/tools/serial_smoke.py --target quick23 --watch --timeout 10 /dev/cu.usbserial-*
-make hardware-mine MINE_ARGS='--target quick21 --count 5 /dev/cu.usbserial-*'
-```
-
-`quick21` is useful for frequent hardware-miner logs, `quick23` averages about
-`1.2 s` per candidate, and `quick26` averages about `9.7 s` per candidate on
-the `111 MHz` 20K build.
-
-## 7. Integrate A Host Miner
+## 6. Host Miner Responsibilities
 
 Host software should:
 
