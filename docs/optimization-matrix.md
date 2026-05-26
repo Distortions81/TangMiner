@@ -1,6 +1,6 @@
 # Optimization Matrix
 
-Snapshot date: 2026-05-25.
+Snapshot date: 2026-05-26.
 
 This note summarizes the optimization branches and local build artifacts that
 exist in this checkout. It keeps historical sweep data because that explains
@@ -15,6 +15,56 @@ the current defaults. The active branch graph is:
 
 No `AGENTS.md` or `agents.md` file exists inside this repository at the time of
 this snapshot.
+
+## 2026-05-26 Progress
+
+The next optimization path is the production-trimmed five-lane design at
+`111 MHz`. It reuses the current production trims (`SPINAL_ENABLE_ECHO=0`,
+`SPINAL_ENABLE_HARDCODED=0`, `SPINAL_FIXED_CANDIDATE=2`) and only raises the
+clock profile from `100m286` to `111m`.
+
+Local artifacts from `build/seed-sweep-prod5-fast` show one routed timing pass:
+
+| Variant | Result | Modeled rate | Fmax | Margin | LUT4 | DFF | Evidence |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 5 lanes, 111 MHz, seed 6 | Pass | 8.67 MH/s | 117.67 MHz | 6.0% | 72% | 61% | `build/seed-sweep-prod5-fast/lanes5_111m/seed6/nextpnr.log` |
+| 5 lanes, 111 MHz, seeds 1..20 partial sweep | Mixed | 8.67 MH/s | best 117.67 MHz | best 6.0% | 72% | 61% | 1 pass, 3 timing failures, 2 placement failures, 7 timeouts, 7 incomplete logs |
+| 5 lanes, 120 MHz, seeds 1..20 partial sweep | No pass | 9.38 MH/s | best failed 113.55 MHz | -5.4% | 72% | 61% | 7 timing failures, 6 placement failures, 7 timeouts |
+
+The passing seed-6 PNR output was packaged successfully:
+
+```text
+build/seed-sweep-prod5-fast/lanes5_111m/seed6/tangminer_spinal_tangnano20k.fs
+```
+
+No-hardware validation run on 2026-05-26:
+
+- `make -C stratum test`: pass.
+- `python3 scripts/tools/emulator_smoke.py`: pass.
+
+Hardware validation is still pending. At the time of this note, no board was
+visible to the host: no `/dev/ttyUSB*` or `/dev/ttyACM*`, `openFPGALoader
+--scan-usb` returned no probes, and `openFPGALoader --detect` reported no FTDI
+device. Once the Tang Nano is visible, the intended SRAM-load command for this
+artifact is:
+
+```sh
+local/oss-cad-suite/bin/openFPGALoader \
+  --ftdi-channel 0 --freq 2000000 \
+  -b tangnano20k \
+  build/seed-sweep-prod5-fast/lanes5_111m/seed6/tangminer_spinal_tangnano20k.fs
+```
+
+Then run the host with a no-submit hardware check:
+
+```sh
+NO_SUBMIT=1 VERBOSE=1 HARDWARE_FPGA_TARGET=quick21 \
+  scripts/mine-hardware.sh /dev/ttyUSB0
+```
+
+If the board accepts the SRAM load and returns validated candidates, this
+variant becomes the strongest known build so far: `8.67 MH/s` modeled, about
+`10.7%` faster than the current `5x100.286` default.
 
 ## Current Selected Build
 
@@ -205,6 +255,7 @@ Observed impact:
 | Production trim with fixed candidate/no echo/no hardcoded job | Proven useful | Reduces 4-lane LUT4 from about 65% to 58%, and enables a 5-lane 90 MHz build. |
 | 5 production lanes at 90 MHz | Proven useful but marginal | 7.03 MH/s modeled, slightly above 4x111, with 13.3% timing margin. Needs functional/hardware validation before replacing baseline. |
 | 5 production lanes at 100.286 MHz with seed search | Current default, seed-sensitive | Seeds 4, 10, and 13 pass; seed 13 reaches 116.28 MHz for 7.84 MH/s modeled. Several seeds still fail placement, so the default locks seed 13. |
+| 5 production lanes at 111 MHz with seed search | New best candidate, needs hardware validation | Seed 6 passes at 117.67 MHz for 8.67 MH/s modeled. Packaged bitstream exists, but no board was visible during the first hardware test attempt. |
 | `synth_gowin -nowidelut` on 5 production lanes | Tried, possible fallback | Seed 13 passes at 110.04 MHz with the same headline LUT/DFF percentage as baseline, but it is slower than the normal seed 13 build. |
 | 5 production lanes as one wide block | Tried, not helpful | `SPINAL_WIDE_LANES=1` increased area and failed placement for every tried comparison seed. |
 | Global `synth_gowin -noflatten` | Tried, not usable directly | Preserves hierarchy but produces JSON that nextpnr rejects during I/O packing in this flow. |
@@ -217,10 +268,13 @@ Observed impact:
 
 ## Untested Or Incomplete Combinations
 
+- Hardware-validate the packaged 5-lane 111 MHz seed-6 bitstream.
 - Continue hardware validation of the locked 5 production lane 100.286 MHz seed
-  13 result.
-- 5 production lanes at 111 MHz with seed search, if placement can be made
-  reliable enough to justify trying a higher clock.
+  13 result as a fallback/reference.
+- Add first-class seed sweeping to `scripts/tools/sweep_spinal_variants.py` so
+  seed searches can reuse a synthesized netlist and emit a compact summary.
+- Try an intermediate 5-lane production clock profile around 106-108 MHz if
+  111 MHz proves unstable on hardware or too seed-sensitive.
 - `origin/sram-optimize` baseline sweep at 90/100.286/120 MHz.
 - `origin/sram-optimize` plus production trim.
 - Combined `width-exp` round-skip single-pair with `sram-optimize`. This needs
@@ -230,10 +284,13 @@ Observed impact:
 
 ## Recommended Next Sweep Order
 
-1. Continue validating the production 5-lane 100.286 MHz seed 13 bitstream on
-   hardware.
-2. Sweep `origin/sram-optimize` with production trims to see whether the DFF
+1. Hardware-validate the packaged 5-lane 111 MHz seed-6 bitstream.
+2. Add a reusable seed-sweep flow and rerun 5-lane production seeds for 111 MHz
+   and a lower intermediate clock such as 106-108 MHz.
+3. Keep the production 5-lane 100.286 MHz seed-13 bitstream as the conservative
+   fallback until the faster image is proven on hardware.
+4. Sweep `origin/sram-optimize` with production trims to see whether the DFF
    reduction can combine with the smaller control surface without exhausting
    LUTs.
-3. Pause further round-skip work until the critical path is restructured; the
+5. Pause further round-skip work until the critical path is restructured; the
    current implementation has now failed the clean single-pair checks.
