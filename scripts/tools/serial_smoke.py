@@ -71,6 +71,11 @@ def main():
     parser.add_argument("--hardcoded", action="store_true", help="ask FPGA to run its built-in genesis nonce-zero job")
     parser.add_argument("--count", type=int, default=1, help="number of hash jobs to run; use 0 to run until interrupted")
     parser.add_argument("--watch", action="store_true", help="keep sending fresh smoke jobs and printing candidates")
+    parser.add_argument(
+        "--require-target",
+        action="store_true",
+        help="exit non-zero if any returned nonce fails host target verification",
+    )
     args = parser.parse_args()
 
     ports = args.ports or sorted(glob.glob("/dev/cu.usbserial-*"))
@@ -107,6 +112,7 @@ def main():
 
                 print(f"packet_len={3 if args.hardcoded else 79}")
                 job_index = 0
+                target_failures = 0
                 try:
                     while total_jobs is None or job_index < total_jobs:
                         header = GENESIS_HEADER if args.hardcoded else header_for_job(job_index)
@@ -122,18 +128,25 @@ def main():
                         digest = bitcoin_hash_for_nonce(header, nonce)
                         candidate_difficulty = share_difficulty(digest)
                         requested_difficulty = target_difficulty(validation_target)
+                        target_ok = meets_target(digest, validation_target)
+                        if not target_ok:
+                            target_failures += 1
                         print(
                             f"{port}: job={job_index} FOUND nonce=0x{nonce:08x} "
                             f"host_hash={digest.hex()} "
                             f"share_difficulty={format_difficulty_units(candidate_difficulty)} "
                             f"target_difficulty={format_difficulty_units(requested_difficulty)} "
-                            f"target_met={'yes' if meets_target(digest, validation_target) else 'no'}"
+                            f"target_met={'yes' if target_ok else 'no'}"
                         )
                         job_index += 1
                 except KeyboardInterrupt:
                     print(f"{port}: stopped")
                     return
                 if job_index:
+                    if args.require_target and target_failures:
+                        raise SystemExit(
+                            f"{port}: {target_failures}/{job_index} returned nonce(s) failed host target verification"
+                        )
                     return
         except Exception as exc:
             print(f"{port}: ERROR {exc}")

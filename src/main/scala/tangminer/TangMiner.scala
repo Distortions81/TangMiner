@@ -18,7 +18,9 @@ case class TangMinerHardwareOptions(
   enableEcho: Boolean = true,
   enableHardcodedJob: Boolean = true,
   fixedCandidateMode: Option[Int] = None,
-  wideLaneBlock: Boolean = false
+  wideLaneBlock: Boolean = false,
+  registerPassOutputs: Boolean = false,
+  twoCycleRound: Boolean = false
 ) {
   fixedCandidateMode.foreach(mode =>
     require(mode >= 0 && mode <= 5, s"fixedCandidateMode must be 0..5, got $mode")
@@ -28,10 +30,19 @@ case class TangMinerHardwareOptions(
 object GowinClockProfiles {
   val Profiles = Map(
     "27m" -> GowinClockProfile("27m", 27.0, 234, usePll = false),
+    "54m" -> GowinClockProfile("54m", 54.0, 469, usePll = true, idivSel = 0, fbdivSel = 1, odivSel = 8),
+    "67m5" -> GowinClockProfile("67m5", 67.5, 586, usePll = true, idivSel = 1, fbdivSel = 4, odivSel = 8),
+    "81m" -> GowinClockProfile("81m", 81.0, 703, usePll = true, idivSel = 0, fbdivSel = 2, odivSel = 8),
+    "84m" -> GowinClockProfile("84m", 84.0, 729, usePll = true, idivSel = 8, fbdivSel = 27, odivSel = 8),
+    "85m5" -> GowinClockProfile("85m5", 85.5, 742, usePll = true, idivSel = 5, fbdivSel = 18, odivSel = 8),
     "90m" -> GowinClockProfile("90m", 90.0, 781, usePll = true, idivSel = 2, fbdivSel = 9, odivSel = 8),
     "100m286" -> GowinClockProfile("100m286", 100.286, 871, usePll = true, idivSel = 6, fbdivSel = 25, odivSel = 8),
     "111m" -> GowinClockProfile("111m", 111.0, 964, usePll = true, idivSel = 8, fbdivSel = 36, odivSel = 8),
     "120m" -> GowinClockProfile("120m", 120.0, 1042, usePll = true, idivSel = 8, fbdivSel = 39, odivSel = 8),
+    "123m" -> GowinClockProfile("123m", 123.0, 1068, usePll = true, idivSel = 8, fbdivSel = 40, odivSel = 8),
+    "124m875" -> GowinClockProfile("124m875", 124.875, 1084, usePll = true, idivSel = 7, fbdivSel = 36, odivSel = 8),
+    "126m" -> GowinClockProfile("126m", 126.0, 1094, usePll = true, idivSel = 2, fbdivSel = 13, odivSel = 8),
+    "130m5" -> GowinClockProfile("130m5", 130.5, 1133, usePll = true, idivSel = 5, fbdivSel = 28, odivSel = 8),
     "135m" -> GowinClockProfile("135m", 135.0, 1172, usePll = true, idivSel = 1, fbdivSel = 9, odivSel = 8),
     "150m" -> GowinClockProfile("150m", 150.0, 1302, usePll = true, idivSel = 8, fbdivSel = 49, odivSel = 8)
   )
@@ -285,7 +296,10 @@ class UartTx(clksPerBit: Int) extends Component {
   }
 }
 
-class Sha256CompressWords extends Component {
+class Sha256CompressWords(
+  registerOutput: Boolean = false,
+  twoCycleRound: Boolean = false
+) extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
@@ -303,71 +317,160 @@ class Sha256CompressWords extends Component {
   val round = Reg(UInt(6 bits)) init 0
   val busyReg = Reg(Bool()) init False
 
+  def loadState(): Unit = {
+    a := io.stateIn(255 downto 224).asUInt
+    b := io.stateIn(223 downto 192).asUInt
+    c := io.stateIn(191 downto 160).asUInt
+    d := io.stateIn(159 downto 128).asUInt
+    e := io.stateIn(127 downto 96).asUInt
+    f := io.stateIn(95 downto 64).asUInt
+    g := io.stateIn(63 downto 32).asUInt
+    h := io.stateIn(31 downto 0).asUInt
+
+    for (i <- 0 until 16) {
+      w(i) := io.words(i)
+    }
+    wRound := io.words(0)
+
+    round := 0
+    busyReg := True
+  }
+
+  def clearState(): Unit = {
+    a := 0; b := 0; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0
+    for (i <- 0 until 16) w(i) := 0
+    wRound := 0
+    round := 0
+    busyReg := False
+  }
+
   val wNext = (Sha256.smallSigma1(w(14)) + w(9) + Sha256.smallSigma0(w(1)) + w(0)).resize(32)
   val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + io.kWord + wRound).resize(32)
   val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
   val aNext = (t1 + t2).resize(32)
   val eNext = (d + t1).resize(32)
   val finalRound = busyReg && round === 63
-  val finalWork = Sha256.concatWords(Seq(
-    aNext,
-    a,
-    b,
-    c,
-    eNext,
-    e,
-    f,
-    g
-  ))
+  val finalWork = Sha256.concatWords(Seq(aNext, a, b, c, eNext, e, f, g))
 
-  io.done := finalRound
   io.roundOut := round
-  io.workOut := finalWork
 
-  when(io.reset) {
-    a := 0; b := 0; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0
-    for (i <- 0 until 16) w(i) := 0
-    wRound := 0
-    round := 0
-    busyReg := False
-  } otherwise {
-    when(io.start && (!busyReg || finalRound)) {
-      a := io.stateIn(255 downto 224).asUInt
-      b := io.stateIn(223 downto 192).asUInt
-      c := io.stateIn(191 downto 160).asUInt
-      d := io.stateIn(159 downto 128).asUInt
-      e := io.stateIn(127 downto 96).asUInt
-      f := io.stateIn(95 downto 64).asUInt
-      g := io.stateIn(63 downto 32).asUInt
-      h := io.stateIn(31 downto 0).asUInt
+  if (twoCycleRound) {
+    object Phase extends SpinalEnum {
+      val compute, update = newElement()
+    }
 
-      for (i <- 0 until 16) {
-        w(i) := io.words(i)
+    val phase = Reg(Phase()) init Phase.compute
+    val t1Reg = Reg(UInt(32 bits)) init 0
+    val t2Reg = Reg(UInt(32 bits)) init 0
+    val wNextReg = Reg(UInt(32 bits)) init 0
+    val doneReg = Reg(Bool()) init False
+    val workOutReg = Reg(Bits(256 bits)) init 0
+    val aSplitNext = (t1Reg + t2Reg).resize(32)
+    val eSplitNext = (d + t1Reg).resize(32)
+    val finalSplitWork = Sha256.concatWords(Seq(aSplitNext, a, b, c, eSplitNext, e, f, g))
+
+    io.done := doneReg
+    io.workOut := workOutReg
+
+    when(io.reset) {
+      clearState()
+      phase := Phase.compute
+      t1Reg := 0
+      t2Reg := 0
+      wNextReg := 0
+      doneReg := False
+      workOutReg := 0
+    } otherwise {
+      doneReg := False
+      when(io.start && !busyReg) {
+        loadState()
+        phase := Phase.compute
+      } elsewhen(busyReg) {
+        switch(phase) {
+          is(Phase.compute) {
+            t1Reg := t1
+            t2Reg := t2
+            wNextReg := wNext
+            phase := Phase.update
+          }
+          is(Phase.update) {
+            for (i <- 0 until 15) {
+              w(i) := w(i + 1)
+            }
+            w(15) := wNextReg
+            wRound := w(1)
+
+            h := g
+            g := f
+            f := e
+            e := eSplitNext
+            d := c
+            c := b
+            b := a
+            a := aSplitNext
+
+            when(round === 63) {
+              busyReg := False
+              round := 0
+              phase := Phase.compute
+              doneReg := True
+              workOutReg := finalSplitWork
+            } otherwise {
+              round := round + 1
+              phase := Phase.compute
+            }
+          }
+        }
       }
-      wRound := io.words(0)
+    }
+  } else {
+    if (registerOutput) {
+      val doneReg = Reg(Bool()) init False
+      val workOutReg = Reg(Bits(256 bits)) init 0
 
-      round := 0
-      busyReg := True
-    } elsewhen(busyReg) {
-      for (i <- 0 until 15) {
-        w(i) := w(i + 1)
-      }
-      w(15) := wNext
-      wRound := w(1)
+      io.done := doneReg
+      io.workOut := workOutReg
 
-      h := g
-      g := f
-      f := e
-      e := eNext
-      d := c
-      c := b
-      b := a
-      a := aNext
-
-      when(round === 63) {
-        busyReg := False
+      when(io.reset) {
+        doneReg := False
+        workOutReg := 0
       } otherwise {
-        round := round + 1
+        doneReg := finalRound
+        when(finalRound) {
+          workOutReg := finalWork
+        }
+      }
+    } else {
+      io.done := finalRound
+      io.workOut := finalWork
+    }
+
+    when(io.reset) {
+      clearState()
+    } otherwise {
+      when(io.start && (!busyReg || finalRound)) {
+        loadState()
+      } elsewhen(busyReg) {
+        for (i <- 0 until 15) {
+          w(i) := w(i + 1)
+        }
+        w(15) := wNext
+        wRound := w(1)
+
+        h := g
+        g := f
+        f := e
+        e := eNext
+        d := c
+        c := b
+        b := a
+        a := aNext
+
+        when(round === 63) {
+          busyReg := False
+        } otherwise {
+          round := round + 1
+        }
       }
     }
   }
@@ -382,7 +485,10 @@ object Sha256Pass {
   def ivBits: Bits = B(Sha256.Iv.map(v => B(v, 32 bits)).reduce(_ ## _))
 }
 
-class Sha256BitcoinFirstPass extends Component {
+class Sha256BitcoinFirstPass(
+  registerOutputs: Boolean = false,
+  twoCycleRound: Boolean = false
+) extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
@@ -395,7 +501,7 @@ class Sha256BitcoinFirstPass extends Component {
     val digest = out Bits(256 bits)
   }
 
-  val core = new Sha256CompressWords
+  val core = new Sha256CompressWords(registerOutputs, twoCycleRound)
   val words = Vec(Seq(
     io.tail(95 downto 64).asUInt,
     io.tail(63 downto 32).asUInt,
@@ -421,12 +527,34 @@ class Sha256BitcoinFirstPass extends Component {
   core.io.stateIn := io.midstate
   core.io.words := words
 
-  io.done := core.io.done
   io.round := core.io.roundOut
-  io.digest := Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
+  val digest = Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
+  if (registerOutputs) {
+    val doneReg = Reg(Bool()) init False
+    val digestReg = Reg(Bits(256 bits)) init 0
+
+    io.done := doneReg
+    io.digest := digestReg
+
+    when(io.reset) {
+      doneReg := False
+      digestReg := 0
+    } otherwise {
+      doneReg := core.io.done
+      when(core.io.done) {
+        digestReg := digest
+      }
+    }
+  } else {
+    io.done := core.io.done
+    io.digest := digest
+  }
 }
 
-class Sha256BitcoinSecondPass extends Component {
+class Sha256BitcoinSecondPass(
+  registerOutputs: Boolean = false,
+  twoCycleRound: Boolean = false
+) extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
@@ -437,7 +565,7 @@ class Sha256BitcoinSecondPass extends Component {
     val digestLow32 = out Bits(32 bits)
   }
 
-  val core = new Sha256CompressWords
+  val core = new Sha256CompressWords(registerOutputs, twoCycleRound)
   val shaIv = Sha256Pass.ivBits
   val words = Vec(Seq(
     Sha256.wordFromDigest(io.firstDigest, 0),
@@ -464,9 +592,28 @@ class Sha256BitcoinSecondPass extends Component {
   core.io.stateIn := shaIv
   core.io.words := words
 
-  io.done := core.io.done
   io.round := core.io.roundOut
-  io.digestLow32 := (Sha256.word(Sha256.Iv(7)) + Sha256.wordFromDigest(core.io.workOut, 7)).resize(32).asBits
+  val digestLow32 = (Sha256.word(Sha256.Iv(7)) + Sha256.wordFromDigest(core.io.workOut, 7)).resize(32).asBits
+  if (registerOutputs) {
+    val doneReg = Reg(Bool()) init False
+    val digestLow32Reg = Reg(Bits(32 bits)) init 0
+
+    io.done := doneReg
+    io.digestLow32 := digestLow32Reg
+
+    when(io.reset) {
+      doneReg := False
+      digestLow32Reg := 0
+    } otherwise {
+      doneReg := core.io.done
+      when(core.io.done) {
+        digestLow32Reg := digestLow32
+      }
+    }
+  } else {
+    io.done := core.io.done
+    io.digestLow32 := digestLow32
+  }
 }
 
 class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptions()) extends Component {
@@ -509,14 +656,14 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
 
   val flushPipeline = io.stop || (io.start && state =/= State.idle)
 
-  val shaFirst = new Sha256BitcoinFirstPass
+  val shaFirst = new Sha256BitcoinFirstPass(options.registerPassOutputs, options.twoCycleRound)
   shaFirst.io.reset := io.reset || flushPipeline
   shaFirst.io.start := shaFirstStart
   shaFirst.io.midstate := jobMidstateReg
   shaFirst.io.tail := jobTailReg
   shaFirst.io.nonce := currentNonceReg
 
-  val shaSecond = new Sha256BitcoinSecondPass
+  val shaSecond = new Sha256BitcoinSecondPass(options.registerPassOutputs, options.twoCycleRound)
   shaSecond.io.reset := io.reset || flushPipeline
   shaSecond.io.start := shaSecondStart
   shaSecond.io.firstDigest := shaFirst.io.digest
@@ -704,12 +851,115 @@ class BitcoinHashWideLaneBlock(
   }
 }
 
+class MiningLanes(
+  laneCount: Int,
+  laneStartStagger: Int,
+  options: TangMinerHardwareOptions = TangMinerHardwareOptions()
+) extends Component {
+  require(laneCount > 0, "laneCount must be positive")
+  require(laneStartStagger >= 0, "laneStartStagger must be non-negative")
+
+  val io = new Bundle {
+    val reset = in Bool()
+    val start = in Bool()
+    val stop = in Bool()
+    val midstate = in Bits(256 bits)
+    val tail = in Bits(96 bits)
+    val candidateMode = in UInt(3 bits)
+    val runningAny = out Bool()
+    val foundAny = out Bool()
+    val currentNonce = out UInt(32 bits)
+    val foundNonce = out UInt(32 bits)
+  }
+
+  if (options.wideLaneBlock) {
+    val lanes = new BitcoinHashWideLaneBlock(laneCount, options)
+    lanes.io.reset := io.reset
+    lanes.io.start := io.start
+    lanes.io.stop := io.stop
+    lanes.io.midstate := io.midstate
+    lanes.io.tail := io.tail
+    lanes.io.candidateMode := io.candidateMode
+    io.runningAny := lanes.io.runningAny
+    io.foundAny := lanes.io.foundAny
+    io.currentNonce := lanes.io.currentNonce
+    io.foundNonce := lanes.io.foundNonce
+  } else {
+    val cores = (0 until laneCount).map(_ => new BitcoinHashCore(options))
+    cores.foreach(_.io.reset := io.reset)
+    val coreStartByLane = Vec(Bool(), laneCount)
+
+    if (laneStartStagger == 0) {
+      for (lane <- 0 until laneCount) {
+        coreStartByLane(lane) := io.start
+      }
+    } else {
+      val maxStartDelay = (laneCount - 1) * laneStartStagger
+      val delayBits = log2Up(scala.math.max(2, maxStartDelay + 1))
+      val laneStartPending = Reg(Bits(laneCount bits)) init 0
+      val laneStartDelay = Vec(Reg(UInt(delayBits bits)) init 0, laneCount)
+
+      for (lane <- 0 until laneCount) {
+        coreStartByLane(lane) := False
+      }
+
+      when(io.reset || io.stop) {
+        laneStartPending := 0
+        for (lane <- 0 until laneCount) {
+          laneStartDelay(lane) := 0
+        }
+      } otherwise {
+        when(io.start) {
+          laneStartPending := B((BigInt(1) << laneCount) - 1, laneCount bits)
+          for (lane <- 0 until laneCount) {
+            laneStartDelay(lane) := U(lane * laneStartStagger, delayBits bits)
+          }
+        }
+
+        for (lane <- 0 until laneCount) {
+          when(laneStartPending(lane)) {
+            when(laneStartDelay(lane) === 0) {
+              coreStartByLane(lane) := True
+              laneStartPending(lane) := False
+            } otherwise {
+              laneStartDelay(lane) := laneStartDelay(lane) - 1
+            }
+          }
+        }
+      }
+    }
+
+    for ((core, lane) <- cores.zipWithIndex) {
+      core.io.start := coreStartByLane(lane)
+      core.io.stop := io.stop
+      core.io.midstate := io.midstate
+      core.io.tail := io.tail
+      core.io.candidateMode := io.candidateMode
+      core.io.startNonce := U(lane, 32 bits)
+      core.io.nonceStride := U(laneCount, 32 bits)
+    }
+
+    io.runningAny := cores.map(_.io.running).reduce(_ || _)
+    io.foundAny := cores.map(_.io.found).reduce(_ || _)
+    io.currentNonce := cores(0).io.currentNonce
+
+    io.foundNonce := cores(laneCount - 1).io.foundNonce
+    for (lane <- (0 until laneCount - 1).reverse) {
+      when(cores(lane).io.found) {
+        io.foundNonce := cores(lane).io.foundNonce
+      }
+    }
+  }
+}
+
 class Top(
   clksPerBit: Int = 871,
   resetCounterBits: Int = 24,
   usePll: Boolean = true,
   laneCount: Int = 5,
+  laneStartStagger: Int = 0,
   clockProfile: GowinClockProfile = GowinClockProfiles.byName("100m286"),
+  splitShaClock: Boolean = false,
   hardwareOptions: TangMinerHardwareOptions = TangMinerHardwareOptions(
     enableEcho = false,
     enableHardcodedJob = false,
@@ -719,7 +969,9 @@ class Top(
   require(clksPerBit > 1, "clksPerBit must leave room for UART start-bit centering")
   require(resetCounterBits > 0, "resetCounterBits must be positive")
   require(laneCount > 0, "laneCount must be positive")
+  require(laneStartStagger >= 0, "laneStartStagger must be non-negative")
   require(!usePll || clockProfile.usePll, s"clock profile '${clockProfile.name}' does not define PLL settings")
+  require(!splitShaClock || usePll, "splitShaClock requires a PLL-backed SHA clock")
 
   setDefinitionName("top")
   noIoPrefix()
@@ -753,12 +1005,71 @@ class Top(
     systemClockLocked := True
   }
 
-  val coreArea = new ClockingArea(ClockDomain(systemClock, config = ClockDomainConfig(resetKind = BOOT))) {
-    val ClksPerBit = clksPerBit
+  val controlClock = if (splitShaClock) io.clk else systemClock
+  val controlClockLocked = if (splitShaClock) True else systemClockLocked
+  val controlClksPerBit = if (splitShaClock) GowinClockProfiles.byName("27m").clksPerBit else clksPerBit
+  val controlDomain = ClockDomain(controlClock, config = ClockDomainConfig(resetKind = BOOT))
+  val shaDomain = ClockDomain(systemClock, config = ClockDomainConfig(resetKind = BOOT))
+  val SplitJobPayloadBits = 256 + 96 + 3
+
+  val splitJobFifo: StreamFifoCC[Bits] =
+    if (splitShaClock) StreamFifoCC(Bits(SplitJobPayloadBits bits), 2, controlDomain, shaDomain) else null
+  val splitStopFifo: StreamFifoCC[Bits] =
+    if (splitShaClock) StreamFifoCC(Bits(1 bits), 2, controlDomain, shaDomain) else null
+  val splitFoundFifo: StreamFifoCC[Bits] =
+    if (splitShaClock) StreamFifoCC(Bits(32 bits), 2, shaDomain, controlDomain) else null
+  var splitShaReady: Bool = null
+  var splitShaRunningAny: Bool = null
+
+  if (splitShaClock) {
+    val shaArea = new ClockingArea(shaDomain) {
+      val resetCounter = Reg(UInt(resetCounterBits bits)) init 0
+      val reset = !systemClockLocked || !resetCounter.msb
+      when(!systemClockLocked) {
+        resetCounter := 0
+      } elsewhen(!resetCounter.msb) {
+        resetCounter := resetCounter + 1
+      }
+
+      val lanes = new MiningLanes(laneCount, laneStartStagger, hardwareOptions)
+      val jobPayload = splitJobFifo.io.pop.payload
+      val jobStart = splitJobFifo.io.pop.valid && !reset
+      val stopPulse = splitStopFifo.io.pop.valid && !reset
+
+      splitJobFifo.io.pop.ready := jobStart
+      splitStopFifo.io.pop.ready := True
+
+      lanes.io.reset := reset
+      lanes.io.start := jobStart
+      lanes.io.stop := stopPulse
+      lanes.io.midstate := jobPayload(SplitJobPayloadBits - 1 downto 99)
+      lanes.io.tail := jobPayload(98 downto 3)
+      lanes.io.candidateMode := jobPayload(2 downto 0).asUInt
+
+      val foundSent = Reg(Bool()) init False
+      when(reset || jobStart || stopPulse) {
+        foundSent := False
+      } elsewhen(splitFoundFifo.io.push.valid && splitFoundFifo.io.push.ready) {
+        foundSent := True
+      }
+
+      splitFoundFifo.io.push.valid := lanes.io.foundAny && !foundSent && !reset
+      splitFoundFifo.io.push.payload := lanes.io.foundNonce.asBits
+
+      val ready = !reset
+      val runningAny = lanes.io.runningAny
+    }
+    splitShaReady = shaArea.ready
+    splitShaRunningAny = shaArea.runningAny
+  }
+
+  val coreArea = new ClockingArea(controlDomain) {
+    val ClksPerBit = controlClksPerBit
     val JobBytes = 76
     val FoundRespBytes = 5
     val EchoRespBytes = 77
     val LaneCount = laneCount
+    val LaneStartStagger = laneStartStagger
     val CandidateAlways = U(0, 3 bits)
     val CandidateQuick3 = U(1, 3 bits)
     val CandidateQuick21 = U(2, 3 bits)
@@ -774,8 +1085,8 @@ class Top(
     val useTargetAliases = hardwareOptions.fixedCandidateMode.isEmpty
 
     val resetCounter = Reg(UInt(resetCounterBits bits)) init 0
-    val reset = !systemClockLocked || !resetCounter.msb
-    when(!systemClockLocked) {
+    val reset = !controlClockLocked || !resetCounter.msb
+    when(!controlClockLocked) {
       resetCounter := 0
     } elsewhen(!resetCounter.msb) {
       resetCounter := resetCounter + 1
@@ -819,8 +1130,21 @@ class Top(
     val currentNonce = UInt(32 bits)
     val selectedFoundNonce = UInt(32 bits)
 
-    if (hardwareOptions.wideLaneBlock) {
-      val lanes = new BitcoinHashWideLaneBlock(LaneCount, hardwareOptions)
+    val splitStopPending = if (splitShaClock) Reg(Bool()) init False else False
+    if (splitShaClock) {
+      val shaReady = BufferCC(splitShaReady, 2)
+      splitJobFifo.io.push.valid := coreStartPending && shaReady
+      splitJobFifo.io.push.payload := midstate ## tail ## candidateMode.asBits
+      splitStopFifo.io.push.valid := splitStopPending
+      splitStopFifo.io.push.payload := B"1'b1"
+      splitFoundFifo.io.pop.ready := False
+
+      runningAny := BufferCC(splitShaRunningAny, 2)
+      foundAny := splitFoundFifo.io.pop.valid
+      currentNonce := U(0, 32 bits)
+      selectedFoundNonce := splitFoundFifo.io.pop.payload.asUInt
+    } else {
+      val lanes = new MiningLanes(LaneCount, LaneStartStagger, hardwareOptions)
       lanes.io.reset := reset
       lanes.io.start := coreStart
       lanes.io.stop := coreStop
@@ -831,30 +1155,6 @@ class Top(
       foundAny := lanes.io.foundAny
       currentNonce := lanes.io.currentNonce
       selectedFoundNonce := lanes.io.foundNonce
-    } else {
-      val cores = (0 until LaneCount).map(_ => new BitcoinHashCore(hardwareOptions))
-      cores.foreach(_.io.reset := reset)
-
-      for ((core, lane) <- cores.zipWithIndex) {
-        core.io.start := coreStart
-        core.io.stop := coreStop
-        core.io.midstate := midstate
-        core.io.tail := tail
-        core.io.candidateMode := candidateMode
-        core.io.startNonce := U(lane, 32 bits)
-        core.io.nonceStride := U(LaneCount, 32 bits)
-      }
-
-      runningAny := cores.map(_.io.running).reduce(_ || _)
-      foundAny := cores.map(_.io.found).reduce(_ || _)
-      currentNonce := cores(0).io.currentNonce
-
-      selectedFoundNonce := cores(LaneCount - 1).io.foundNonce
-      for (lane <- (0 until LaneCount - 1).reverse) {
-        when(cores(lane).io.found) {
-          selectedFoundNonce := cores(lane).io.foundNonce
-        }
-      }
     }
 
     when(reset) {
@@ -864,6 +1164,9 @@ class Top(
       coreStart := False
       coreStop := False
       coreStartPending := False
+      if (splitShaClock) {
+        splitStopPending := False
+      }
       midstate := 0
       tail := 0
       if (hardwareOptions.enableEcho) {
@@ -883,9 +1186,18 @@ class Top(
       coreStart := False
       coreStop := False
 
-      when(coreStartPending) {
-        coreStart := True
-        coreStartPending := False
+      if (splitShaClock) {
+        when(coreStartPending && splitJobFifo.io.push.valid && splitJobFifo.io.push.ready) {
+          coreStartPending := False
+        }
+        when(splitStopPending && splitStopFifo.io.push.ready) {
+          splitStopPending := False
+        }
+      } else {
+        when(coreStartPending) {
+          coreStart := True
+          coreStartPending := False
+        }
       }
 
       when(rx.io.valid) {
@@ -902,6 +1214,9 @@ class Top(
             val acceptsJobPayload = rx.io.data === B"8'h4a" || (if (hardwareOptions.enableEcho) rx.io.data === B"8'h45" else False)
             when(rx.io.data === B"8'h53") {
               coreStop := True
+              if (splitShaClock) {
+                splitStopPending := True
+              }
               rxState := RxState.sync0
             } elsewhen((if (hardwareOptions.enableHardcodedJob) rx.io.data === B"8'h48" else False)) {
               midstate := B"256'hbc909a336358bff090ccac7d1e59caa8c3c8d8e94f0103c896b187364719f91b"
@@ -1065,6 +1380,9 @@ class Top(
               txFoundNonce := selectedFoundNonce
               txState := TxState.send
               foundSeen := True
+              if (splitShaClock) {
+                splitFoundFifo.io.pop.ready := True
+              }
             }
           } else {
             when(foundAny && !foundSeen) {
@@ -1072,6 +1390,9 @@ class Top(
               txFoundNonce := selectedFoundNonce
               txState := TxState.send
               foundSeen := True
+              if (splitShaClock) {
+                splitFoundFifo.io.pop.ready := True
+              }
             }
           }
         }
@@ -1142,12 +1463,19 @@ object GenerateVerilog extends App {
   val clockProfile = GowinClockProfiles.byName(envString(Seq("TANGMINER_CLOCK_PROFILE", "SPINAL_CLOCK_PROFILE"), "100m286"))
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), clockProfile.clksPerBit)
   val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 5)
+  val laneStartStagger = envInt(Seq("TANGMINER_LANE_START_STAGGER", "SPINAL_LANE_START_STAGGER"), 0)
+  val splitShaClock = envBoolean("TANGMINER_SPLIT_SHA_CLOCK", default = false) ||
+    envBoolean("SPINAL_SPLIT_SHA_CLOCK", default = false)
   val hardwareOptions = TangMinerHardwareOptions(
     sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
     enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = false),
     enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = false),
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"), Some(2)),
-    wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false)
+    wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
+    registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
+      envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
+    twoCycleRound = envBoolean("TANGMINER_TWO_CYCLE_ROUND", default = false) ||
+      envBoolean("SPINAL_TWO_CYCLE_ROUND", default = false)
   )
 
   SpinalConfig(
@@ -1157,7 +1485,9 @@ object GenerateVerilog extends App {
     clksPerBit = clksPerBit,
     usePll = usePll,
     laneCount = laneCount,
+    laneStartStagger = laneStartStagger,
     clockProfile = clockProfile,
+    splitShaClock = splitShaClock,
     hardwareOptions = hardwareOptions
   ))
 }
@@ -1173,13 +1503,18 @@ object GenerateSimVerilog extends App {
     names.collectFirst(Function.unlift(sys.env.get)).filter(_.nonEmpty).map(_.toInt)
 
   val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 5)
+  val laneStartStagger = envInt(Seq("TANGMINER_LANE_START_STAGGER", "SPINAL_LANE_START_STAGGER"), 0)
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), 8)
   val hardwareOptions = TangMinerHardwareOptions(
     sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = true),
     enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = true),
     enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = true),
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE")),
-    wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false)
+    wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
+    registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
+      envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
+    twoCycleRound = envBoolean("TANGMINER_TWO_CYCLE_ROUND", default = false) ||
+      envBoolean("SPINAL_TWO_CYCLE_ROUND", default = false)
   )
 
   SpinalConfig(
@@ -1190,7 +1525,9 @@ object GenerateSimVerilog extends App {
     resetCounterBits = 4,
     usePll = false,
     laneCount = laneCount,
+    laneStartStagger = laneStartStagger,
     clockProfile = GowinClockProfiles.byName("27m"),
+    splitShaClock = false,
     hardwareOptions = hardwareOptions
   ))
 }
