@@ -55,7 +55,11 @@ hashes on hardware.
 | 1 lane, 123 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 153.66 MHz | 50/50 valid | `build/hw-prod1-123m-2cycle-regpass-seed13` |
 | 1 lane, 124.875 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 134.19 MHz | 50/50 valid, then reloaded and rechecked 10/10 valid; board currently loaded with this image | `build/hw-prod1-124m875-2cycle-regpass-seed13` |
 | 1 lane, 126 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 142.37 MHz | 9/10 valid; 1 false positive | `build/hw-prod1-126m-2cycle-regpass-seed13` |
+| 1 lane, 126 MHz, two-cycle round + registered pass outputs + registered round constant, seed 13 | Pass, 153.07 MHz | 0/10 valid | `build/hw-prod1-126m-2cycle-regpass-regk-seed13` |
+| 1 lane, 126 MHz, two-cycle round + registered pass outputs + minimized SHA reset fanout, seed 13 | Pass, 129.85 MHz | 49/50 valid; 1 false positive | `build/hw-prod1-126m-2cycle-regpass-minreset-seed13` |
 | 1 lane, 135 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 148.68 MHz | 0/10 valid | `build/hw-prod1-135m-2cycle-regpass-seed13` |
+| 1 lane, 135 MHz, three-cycle round + registered pass outputs, seed 13 | Pass, 141.14 MHz | 50/50 valid | `build/hw-prod1-135m-3cycle-regpass-seed13` |
+| 1 lane, 150 MHz, three-cycle round + registered pass outputs, seed 13 | Pass, 154.08 MHz | 3/10 valid; 7 false positives | `build/hw-prod1-150m-3cycle-regpass-seed13` |
 | 1 lane, 81 MHz split SHA/control clocks, two-cycle round + registered pass outputs, seed 13 | Pass, SHA Fmax 131.32 MHz | 10/10 valid | `build/hw-prod1-81m-splitsha-2cycle-regpass-seed13` |
 | 1 lane, 124.875 MHz split SHA/control clocks, two-cycle round + registered pass outputs, seed 13 | Pass, SHA Fmax 131.32 MHz | 10/10 invalid | `build/hw-prod1-124m875-splitsha-2cycle-regpass-seed13` |
 | 1 lane, 126 MHz split SHA/control clocks, two-cycle round + registered pass outputs, seed 13 | Pass, SHA Fmax 131.32 MHz | 10/10 invalid | `build/hw-prod1-126m-splitsha-2cycle-regpass-seed13` |
@@ -66,10 +70,12 @@ The current production-trimmed multi-lane hardware boundary is therefore
 `2x81` valid, `2x84` marginal, and `2x85.5`/`2x90` invalid. The previous
 `5x100.286` and `5x111` static candidates must not be treated as
 hardware-valid. The current single-lane structural probe boundary is
-`1x124.875` valid for 50 strict quick21 jobs, with `1x126` already showing a
-false positive. Splitting UART/control back to the 27 MHz input clock does not
-raise that boundary; the split-clock image works at 81 MHz but is invalid at
-124.875 MHz and 126 MHz.
+`1x124.875` valid for 50 strict quick21 jobs at the 130-cycle two-cycle cadence,
+with `1x126` still showing false positives after both K-prefetch and reset-fanout
+experiments. A three-cycle round reaches a valid `1x135`, but at 194 cycles/nonce
+it is slower than `1x124.875` two-cycle in hashes per second. Splitting
+UART/control back to the 27 MHz input clock does not raise that boundary; the
+split-clock image works at 81 MHz but is invalid at 124.875 MHz and 126 MHz.
 
 Synchronization/timing-fence experiments on 2026-05-26:
 
@@ -89,18 +95,23 @@ Single-lane structural timing experiments on 2026-05-26:
 | Two-cycle SHA round plus registered pass outputs | Cocotb passed at 130 cycles/nonce. `1x150` failed route timing at 138.70 MHz. `1x135` passed static timing but returned 10/10 invalid quick21 candidates. `1x126` passed static timing but returned 1 false positive in 10 jobs. `1x124.875` and `1x123` both passed 50/50 strict quick21 jobs. |
 | `125m18` PLL candidate | Routed with a 152.79 MHz reported Fmax, but `gowin_pack` rejected it because `PFD = 27 MHz / (10 + 1) = 2.45 MHz`, below the 3.0 MHz device limit. Not a usable hardware profile. |
 | Split SHA/control clocks | Implemented as an optional diagnostic using `StreamFifoCC` for job, stop, and found-nonce crossings. `1x81` passed 10/10 strict quick21 jobs, proving the split path can carry correct work. `1x124.875` and `1x126` both routed at 131.32 MHz reported SHA Fmax but returned 10/10 invalid candidates. Not a speed fix. |
+| Registered round-constant prefetch | Moves K selection inside each compressor. Cocotb passed, and `1x126` routed at 153.07 MHz, but hardware returned 10/10 invalid quick21 candidates. Static timing improved while functional timing got worse, so this is not a fix. |
+| Three-cycle SHA round | Splits `t1` and message-schedule arithmetic across prepare/sum/update phases. Cocotb passed at 194 cycles/nonce. `1x135` passed 50/50 strict quick21 jobs, while `1x150` still returned 7 false positives in 10 jobs. This is a useful diagnostic and a valid high-clock image, but it is not a throughput win: 135 MHz / 194 cycles is about 696 kH/s versus about 961 kH/s for 124.875 MHz / 130 cycles. |
+| Minimized SHA reset fanout | Leaves datapath registers out of the explicit flush/reset tree; starts still load all datapath registers. Cocotb passed for two-cycle and three-cycle modes. `1x150` three-cycle failed static timing at 132.12 MHz because the pressure moved to clock-enable/control paths. `1x126` two-cycle routed at 129.85 MHz but still returned 1 false positive in 50 jobs. Not a verified speed fix. |
 
 Conclusion: the problem does look timing/placement related, but not in a way
 fixed by a simple cross-lane synchronizer, by de-sharing the round constant, or
-by clocking control/UART separately from the SHA engine.
+by clocking control/UART separately from the SHA engine. Removing the SHA
+datapath reset fanout also does not raise the verified throughput boundary.
 The failing quick21 candidates are false positives: the FPGA reports nonces whose
 host recomputed hashes do not meet the target. The critical path reports continue
 to point into SHA round add/carry datapaths, and single-lane failures above the
 validated boundary rule out cross-lane synchronization as the primary cause. The
 likely flaw is intra-lane SHA datapath margin under real hardware conditions.
-Pushing beyond `124m875` should split the remaining `t1`/state-update arithmetic
-again or move toward a carry-save-style round datapath; simply adding lane
-staggering or more speed points is not enough.
+Pushing throughput beyond `124m875` should move toward a carry-save-style
+round datapath or another split that keeps close to the 130-cycle cadence;
+the 194-cycle three-phase split fixes `135m` correctness but gives away too much
+throughput.
 
 ## Current Selected Build
 
