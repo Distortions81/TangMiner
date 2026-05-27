@@ -70,12 +70,12 @@ Recognized aliases:
 - `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero.
 - `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero.
 
-On the default 5-lane `100.286 MHz` 20K build:
+On the default 5-lane `54.000 MHz` 20K build:
 
 ```text
-quick21: about 0.27 s per candidate
-quick23: about 1.1 s per candidate
-quick26: about 8.6 s per candidate
+quick21: about 0.50 s per candidate
+quick23: about 2.0 s per candidate
+quick26: about 16.0 s per candidate
 ```
 
 Arbitrary 32-byte target values currently select the `quick23` hardware

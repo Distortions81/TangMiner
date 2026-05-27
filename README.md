@@ -20,11 +20,13 @@ pool work, full double-SHA256 validation, target checks, and share submission.
 - Tang Nano 9K: available with `TARGET=tangnano9k`, but use a smaller lane
   count such as `SPINAL_LANES=1` or `SPINAL_LANES=2`.
 
-The current 20K default is a production-oriented 5-lane build at `100.286 MHz`
-with seed `13`, modeled at about `7.84 MH/s`:
+The current 20K default is the best hardware-validated production build so far:
+5 lanes at `54.000 MHz`, built with `synth_gowin -nowidelut` and nextpnr seed
+`13`. It models at about `4.22 MH/s` and has passed strict host nonce
+validation on real hardware:
 
 ```text
-100.286 MHz * 5 lanes / 64 = 7.835 MH/s
+54.000 MHz * 5 lanes / 64 = 4.219 MH/s
 ```
 
 ## Quick Start
@@ -99,8 +101,9 @@ Generated bitstreams are written under `build/`, for example:
 - `build/tangminer_spinal_tangnano20k.fs`
 - `build/tangminer_spinal_tangnano9k.fs`
 
-Use the same `TARGET`, `SPINAL_LANES`, and clock options for `build`, `load`,
-and `flash`. If you omit them, the Makefile uses the target defaults.
+Use the same `TARGET`, `SPINAL_LANES`, clock, and synthesis options for
+`build`, `load`, and `flash`. If you omit them, the Makefile uses the target
+defaults.
 
 ## Run The Host Program
 
@@ -180,10 +183,11 @@ The default 20K build uses:
 ```text
 TARGET=tangnano20k
 SPINAL_LANES=5
-SPINAL_CLOCK_PROFILE=100m286
+SPINAL_CLOCK_PROFILE=54m
 SPINAL_ENABLE_ECHO=0
 SPINAL_ENABLE_HARDCODED=0
 SPINAL_FIXED_CANDIDATE=2
+YOSYS_SYNTH_ARGS=-nowidelut
 NEXTPNR_SEED=13
 ```
 
@@ -231,7 +235,7 @@ Start with these docs when you need more detail:
 - Tang Nano 20K FPGA: `GW2AR-LV18QN88C8/I7`, family `GW2A-18C`.
 - Tang Nano 9K FPGA: `GW1NR-LV9QN88PC6/I5`, family `GW1N-9C`.
 - Board clock: `27 MHz`.
-- 20K hash clock: internal rPLL to `100.286 MHz`.
+- 20K default hash clock: internal rPLL to `54.000 MHz`.
 - 9K clock path: direct `27 MHz` board clock.
 - Protocol: binary UART packets starting with `TN`.
 

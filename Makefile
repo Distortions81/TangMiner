@@ -13,7 +13,8 @@ FAMILY := GW2A-18C
 DEVICE := GW2AR-LV18QN88C8/I7
 CST := constr/tangnano20k.cst
 SPINAL_USE_PLL ?= 1
-SPINAL_CLOCK_PROFILE ?= 100m286
+SPINAL_CLOCK_PROFILE ?= 54m
+YOSYS_SYNTH_ARGS ?= -nowidelut
 else
 $(error Unsupported TARGET '$(TARGET)'. Use tangnano20k or tangnano9k)
 endif

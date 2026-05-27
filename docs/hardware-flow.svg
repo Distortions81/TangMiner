@@ -100,7 +100,7 @@
   <text class="tiny" x="764" y="338">candidate nonce returns over the same UART link</text>
 
   <rect class="note" x="1200" y="115" width="514" height="44"/>
-  <text class="small" x="1222" y="143">20K default: 5 lanes at 100.286 MHz = about 7.84 MH/s</text>
+  <text class="small" x="1222" y="143">20K default: 5 lanes at 54.000 MHz = about 4.22 MH/s</text>
 
   <rect class="panelTint" x="36" y="390" width="1728" height="438"/>
   <text class="panelTitle" x="60" y="422">2. Detailed Block Diagram Of Modules</text>

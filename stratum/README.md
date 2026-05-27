@@ -116,8 +116,10 @@ validation logs.
 
 ## Hashrate And Byte Order
 
-The selected Tang Nano 20K gateware runs five lanes at `100.286 MHz`, modeled
-as one aggregate nonce every `12.8` fabric clocks, or `7.84 MH/s`.
+The selected Tang Nano 20K gateware runs five lanes at `54.000 MHz`, modeled as
+one aggregate nonce every `12.8` fabric clocks, or `4.219 MH/s`. This is the
+current best hardware-validated point; higher-frequency static builds have
+returned invalid candidates on real hardware.
 
 The FPGA returns `F || nonce[4]` in the byte order inserted into Bitcoin header
 bytes `76..79` for local double-SHA256 validation. Stratum submit uses the

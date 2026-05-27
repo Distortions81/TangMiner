@@ -55,7 +55,7 @@ it does not build a full 256-bit reversed digest or target comparator in the
 rebuilding the header and double-hashing it. If more than one lane is reporting,
 the top level latches one selected result before UART transmit.
 
-For bring-up with frequent candidate output on the default 5-lane `100.286 MHz`
+For bring-up with frequent candidate output on the default 5-lane `54.000 MHz`
 20K build, the host tools accept the named target `quick23`:
 
 ```text

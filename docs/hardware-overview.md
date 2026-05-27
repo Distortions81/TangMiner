@@ -24,13 +24,13 @@ At a high level:
 - The host reconstructs the block header, recomputes the hash, and performs the
   full share target comparison.
 
-On the 20K build, the onboard `27 MHz` clock feeds an internal Gowin `rPLL` that
-drives the hash fabric at `100.286 MHz`. In steady state each lane launches a
-new nonce every `64` FPGA clocks because its first-pass and second-pass
-compressors run at the same time. With five lanes, the aggregate chip cadence is
-one tested nonce every `12.8` clocks, or about `7.84 MH/s`. The selected 20K
-place-and-route seed reports `116.28 MHz` Fmax and passes the `100.286 MHz`
-timing constraint with about `15.9%` margin.
+On the default 20K build, the onboard `27 MHz` clock feeds an internal Gowin
+`rPLL` that drives the hash fabric at `54.000 MHz`. In steady state each lane
+launches a new nonce every `64` FPGA clocks because its first-pass and
+second-pass compressors run at the same time. With five lanes, the aggregate
+chip cadence is one tested nonce every `12.8` clocks, or about `4.219 MH/s`.
+The selected 20K build uses `synth_gowin -nowidelut` with nextpnr seed `13` and
+has passed strict host nonce validation on real hardware.
 
 These boxes are logical hardware blocks. After synthesis, they become Gowin
 FPGA LUTs, flip-flops, carry chains, IO buffers, and routing rather than

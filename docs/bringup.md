@@ -25,10 +25,10 @@ Run the UART-level RTL tests:
 scripts/sim.sh
 ```
 
-The current 20K model should report about `7.84 MH/s`:
+The current default 20K model should report about `4.22 MH/s`:
 
 ```text
-100,286,000 Hz * 5 lanes / 64 = 7.835 MH/s
+54,000,000 Hz * 5 lanes / 64 = 4.219 MH/s
 ```
 
 ## 3. Flash Or Load And Mine

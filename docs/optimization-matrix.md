@@ -6,8 +6,8 @@ This note summarizes the optimization branches and local build artifacts that
 exist in this checkout. It keeps historical sweep data because that explains
 the current defaults. The active branch graph is:
 
-- `main` / `origin/main`: selected production-trimmed 5-lane 20K design at
-  `100.286 MHz`, with `NEXTPNR_SEED=13`.
+- `main` / `origin/main`: selected hardware-validated 5-lane 20K design at
+  `54.000 MHz`, built with `synth_gowin -nowidelut` and `NEXTPNR_SEED=13`.
 - `width-exp` / `origin/width-exp`: experimental 61-cycle round skipping and
   wider local A/B compressor-pair lanes.
 - `origin/sram-optimize`: experimental SHA message schedule storage using
@@ -153,18 +153,19 @@ The current default build is:
 ```text
 TARGET=tangnano20k
 SPINAL_LANES=5
-SPINAL_CLOCK_PROFILE=100m286
+SPINAL_CLOCK_PROFILE=54m
 SPINAL_ENABLE_ECHO=0
 SPINAL_ENABLE_HARDCODED=0
 SPINAL_FIXED_CANDIDATE=2
+YOSYS_SYNTH_ARGS=-nowidelut
 NEXTPNR_SEED=13
 ```
 
-It models at `7.84 MH/s`. The relevant static evidence is the direct seed-13
-production result: `116.28 MHz` Fmax against the `100.286 MHz` timing target,
-about `15.9%` margin. Hardware validation on 2026-05-26 invalidated the higher
-frequency production candidates, so this remains a build default only, not a
-hardware-proven operating point.
+It models at `4.219 MH/s`. The relevant hardware evidence is the
+`build/hw-prod5-54m-nowidelut-seed13` image, which passed both 50/50 and
+100/100 strict `quick21` host nonce validation. Higher-frequency 5-lane static
+candidates remain historical data only because hardware validation on
+2026-05-26 invalidated them with false positives.
 
 ## Historical Main Baseline
 
