@@ -34,7 +34,10 @@ case class TangMinerHardwareOptions(
 object GowinClockProfiles {
   val Profiles = Map(
     "27m" -> GowinClockProfile("27m", 27.0, 234, usePll = false),
-    "54m" -> GowinClockProfile("54m", 54.0, 469, usePll = true, idivSel = 0, fbdivSel = 1, odivSel = 8),
+    "54m" -> GowinClockProfile("54m", 54.0, 469, usePll = true, idivSel = 0, fbdivSel = 1, odivSel = 16),
+    "57m" -> GowinClockProfile("57m", 57.0, 495, usePll = true, idivSel = 8, fbdivSel = 18, odivSel = 16),
+    "58m5" -> GowinClockProfile("58m5", 58.5, 508, usePll = true, idivSel = 5, fbdivSel = 12, odivSel = 16),
+    "60m75" -> GowinClockProfile("60m75", 60.75, 527, usePll = true, idivSel = 3, fbdivSel = 8, odivSel = 16),
     "67m5" -> GowinClockProfile("67m5", 67.5, 586, usePll = true, idivSel = 1, fbdivSel = 4, odivSel = 8),
     "81m" -> GowinClockProfile("81m", 81.0, 703, usePll = true, idivSel = 0, fbdivSel = 2, odivSel = 8),
     "84m" -> GowinClockProfile("84m", 84.0, 729, usePll = true, idivSel = 8, fbdivSel = 27, odivSel = 8),

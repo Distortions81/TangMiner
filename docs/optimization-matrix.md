@@ -53,7 +53,7 @@ hashes on hardware.
 | 1 lane, 90 MHz | Build/load OK | Valid quick21 control | serial quick21 run |
 | 1 lane, 120 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 131.60 MHz | 10/10 valid | `build/hw-prod1-120m-2cycle-regpass-seed13` |
 | 1 lane, 123 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 153.66 MHz | 50/50 valid | `build/hw-prod1-123m-2cycle-regpass-seed13` |
-| 1 lane, 124.875 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 134.19 MHz | 50/50 valid, then reloaded and rechecked 10/10 valid; board currently loaded with this image | `build/hw-prod1-124m875-2cycle-regpass-seed13` |
+| 1 lane, 124.875 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 134.19 MHz | 50/50 valid, then reloaded and rechecked 10/10 valid | `build/hw-prod1-124m875-2cycle-regpass-seed13` |
 | 1 lane, 126 MHz, two-cycle round + registered pass outputs, seed 13 | Pass, 142.37 MHz | 9/10 valid; 1 false positive | `build/hw-prod1-126m-2cycle-regpass-seed13` |
 | 1 lane, 126 MHz, two-cycle round + registered pass outputs + registered round constant, seed 13 | Pass, 153.07 MHz | 0/10 valid | `build/hw-prod1-126m-2cycle-regpass-regk-seed13` |
 | 1 lane, 126 MHz, two-cycle round + registered pass outputs + minimized SHA reset fanout, seed 13 | Pass, 129.85 MHz | 49/50 valid; 1 false positive | `build/hw-prod1-126m-2cycle-regpass-minreset-seed13` |
@@ -63,13 +63,42 @@ hashes on hardware.
 | 1 lane, 81 MHz split SHA/control clocks, two-cycle round + registered pass outputs, seed 13 | Pass, SHA Fmax 131.32 MHz | 10/10 valid | `build/hw-prod1-81m-splitsha-2cycle-regpass-seed13` |
 | 1 lane, 124.875 MHz split SHA/control clocks, two-cycle round + registered pass outputs, seed 13 | Pass, SHA Fmax 131.32 MHz | 10/10 invalid | `build/hw-prod1-124m875-splitsha-2cycle-regpass-seed13` |
 | 1 lane, 126 MHz split SHA/control clocks, two-cycle round + registered pass outputs, seed 13 | Pass, SHA Fmax 131.32 MHz | 10/10 invalid | `build/hw-prod1-126m-splitsha-2cycle-regpass-seed13` |
-| 2 lanes, 81 MHz, seed 13 | Pass, 112.56 MHz | 10/10 valid pre-fence; later 5/5 valid with `--require-target` | `build/hw-verify-prod2-81m-seed13` |
+| 2 lanes, 81 MHz, seed 13 | Pass, 112.56 MHz | Earlier short runs passed, but strict 50-job retest returned 47/50 valid and 3 false positives. Invalidated. | `build/hw-verify-prod2-81m-seed13` |
+| 2 lanes, 67.5 MHz, seed 13 | Pass, 103.78 MHz | 50/50 strict quick21 valid | `build/hw-prod2-67m5-seed13` |
+| 3 lanes, 54 MHz, seed 13 | Pass, 106.86 MHz after fixing the `54m` PLL profile | 50/50 strict quick21 valid | `build/hw-prod3-54m-seed13` |
+| 4 lanes, 54 MHz, seed 13 | Pass, 108.28 MHz; placement reported 61.59 MHz before routing | 50/50 strict quick21 valid | `build/hw-prod4-54m-seed13` |
+| 5 lanes, 54 MHz, seed 13 | Synthesis reached 77% LUT4 / 61% DFF, but placement did not advance beyond the first reported iteration in a practical run and was stopped. Direct seeds 1/2/3/4/6/10, plus seed-4 `--no-tmdriv` and `--placer-heap-beta 1.0`, all failed legal placement. | Not flashed; no bitstream | `build/seed-sweep-prod5-54m` |
+| 5 lanes, 54 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 123.92 MHz; placement reported 72.26 MHz before routing; utilization 72% LUT4 / 61% DFF / 20% ALU | 50/50 and 100/100 strict quick21 valid; board currently loaded with this image | `build/hw-prod5-54m-nowidelut-seed13` |
+| 5 lanes, 57 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 121.37 MHz; utilization 72% LUT4 / 61% DFF / 20% ALU | 41/50 strict quick21 valid; 9 false positives. Invalidated. | `build/hw-prod5-57m-nowidelut-seed13` |
+| 5 lanes, 58.5 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 119.88 MHz; utilization 72% LUT4 / 61% DFF / 20% ALU | 37/50 strict quick21 valid; 13 false positives. Invalidated. | `build/hw-prod5-58m5-nowidelut-seed13` |
+| 5 lanes, 60.75 MHz, seed 13, `synth_gowin -nowidelut` | Failed legal placement at 72% LUT4 / 61% DFF / 20% ALU; direct seed 4 was stopped after spending several minutes in legalisation with no progress. | Not flashed; no bitstream | `build/attempt-logs/prod5-60m75-nowidelut-seed13.log`, `build/seed-sweep-prod5-60m75-nowidelut/seed4` |
+| 5 lanes, 67.5 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 102.29 MHz; placement reported 67.40 MHz before routing; utilization 72% LUT4 / 61% DFF / 20% ALU | 0/50 strict quick21 valid; 50 false positives. Invalidated. | `build/hw-prod5-67m5-nowidelut-seed13` |
+| 6 lanes, 54 MHz, seed 13, `synth_gowin -nowidelut` | Failed legal placement at 86% LUT4 / 72% DFF / 24% ALU | Not flashed; no bitstream | `build/attempt-logs/prod6-54m-nowidelut-seed13.log` |
 | 2 lanes, 27 MHz, no PLL, seed 13 | Pass, 121.20 MHz | 5/5 valid | `build/hw-verify-prod2-27m-seed13` |
 
-The current production-trimmed multi-lane hardware boundary is therefore
-`2x81` valid, `2x84` marginal, and `2x85.5`/`2x90` invalid. The previous
-`5x100.286` and `5x111` static candidates must not be treated as
-hardware-valid. The current single-lane structural probe boundary is
+The `54m` PLL profile was also corrected during this pass. The previous profile
+used `ODIV_SEL=8`, which made a 432 MHz VCO and failed `gowin_pack` on GW2AR-18.
+Changing only `ODIV_SEL` to `16` keeps the output at 54.000 MHz and raises VCO
+to 864 MHz, inside the 500-1250 MHz device range.
+
+The current production-trimmed multi-lane hardware boundary is therefore no
+longer `2x81`; the stricter 50-job check invalidated it. The best validated
+multi-lane point measured in this pass is now `5x54` with `synth_gowin
+-nowidelut`, modeled at `5 * 54 / 64 = 4.219 MH/s`. `4x54` also passed and
+models at 3.375 MH/s, `3x54` passed and models at 2.531 MH/s, and `2x67.5`
+passed and models at 2.109 MH/s. More lanes do help when the clock is kept in a
+conservative timing region, but the normal 5-lane 54 MHz seed-13 netlist was
+still placement-limited. Avoiding wide LUT packing reduced packed LUT4 use from
+77% to 72% and made the 5-lane 54 MHz image place, route, and pass hardware
+hash validation. Follow-up 5-lane `-nowidelut` clock steps at 57 MHz, 58.5 MHz,
+and 67.5 MHz all routed with strong static Fmax but returned false positives on
+hardware, while 60.75 MHz did not legally place with the seeds tried. There is
+no clean `CLKOUT` PLL profile between 54 MHz and 57 MHz that keeps the 27 MHz
+PFD at or above the 3.0 MHz device limit. A sixth lane at 54 MHz reached 86%
+LUT4 / 72% DFF and failed legal placement. The previous `5x100.286` and `5x111`
+static candidates must not be treated as hardware-valid.
+
+The current single-lane structural probe boundary is
 `1x124.875` valid for 50 strict quick21 jobs at the 130-cycle two-cycle cadence,
 with `1x126` still showing false positives after both K-prefetch and reset-fanout
 experiments. A three-cycle round reaches a valid `1x135`, but at 194 cycles/nonce
@@ -108,10 +137,14 @@ host recomputed hashes do not meet the target. The critical path reports continu
 to point into SHA round add/carry datapaths, and single-lane failures above the
 validated boundary rule out cross-lane synchronization as the primary cause. The
 likely flaw is intra-lane SHA datapath margin under real hardware conditions.
-Pushing throughput beyond `124m875` should move toward a carry-save-style
-round datapath or another split that keeps close to the 130-cycle cadence;
-the 194-cycle three-phase split fixes `135m` correctness but gives away too much
-throughput.
+The new 5-lane 54 MHz `-nowidelut` image is the best hardware-validated
+multi-lane point, but it does not change that diagnosis: it succeeds by reducing
+packing and placement pressure at a conservative clock. Pushing the same 5-lane
+shape to 57 MHz already produces false positives, and adding a sixth 54 MHz
+lane does not legally place in the flat layout. Pushing throughput beyond this
+should move toward a carry-save-style round datapath or another split that keeps
+close to the 130-cycle cadence; the 194-cycle three-phase split fixes `135m`
+correctness but gives away too much throughput.
 
 ## Current Selected Build
 
@@ -302,18 +335,23 @@ Observed impact:
 | --- | --- | --- |
 | 4 plain lanes at 111 MHz | Proven historical baseline | 6.94 MH/s modeled, 7.3% timing margin. |
 | Production trim with fixed candidate/no echo/no hardcoded job | Proven useful | Reduces 4-lane LUT4 from about 65% to 58%, and enables a 5-lane 90 MHz build. |
-| 2 production lanes at 81 MHz | Hardware-proven current multi-lane control | `2x81` passes quick21 host verification; `2x84` is already marginal. This is the fastest hardware-valid multi-lane point measured so far in the latest run. |
+| 2 production lanes at 67.5 MHz | Hardware-proven lower-clock control | `2x67.5` passes 50/50 strict quick21 host verification and models at 2.109 MH/s. |
+| 3/4 production lanes at 54 MHz | Hardware-proven lane scaling | `3x54` and `4x54` both pass 50/50 strict quick21 host verification. `4x54` models at 3.375 MH/s. |
+| 5 production lanes at 54 MHz with `synth_gowin -nowidelut` | Hardware-proven best multi-lane point | `5x54` passes 50/50 and 100/100 strict quick21 host verification and models at 4.219 MH/s. |
+| 5 production lanes above 54 MHz with `synth_gowin -nowidelut` | Invalidated by hardware | `5x57` and `5x58.5` route cleanly but return false positives; `5x67.5` returns 50/50 false positives. `5x60.75` did not legally place with the tried seeds. |
+| 6 production lanes at 54 MHz with `synth_gowin -nowidelut` | Does not place | Area reaches 86% LUT4 / 72% DFF / 24% ALU and nextpnr cannot find a legal placement at seed 13. |
+| 2 production lanes at 81 MHz | Invalidated by stricter hardware check | Earlier short runs passed, but a 50-job strict retest found 3 false positives. Do not use as a verified point. |
 | 5 production lanes at 90 MHz | Static-only, not hardware-proven | 7.03 MH/s modeled with 13.3% timing margin, but lower lane-count 90 MHz images already return invalid hardware hashes. |
 | 5 production lanes at 100.286 MHz with seed search | Static-only, hardware invalid above boundary | Seeds 4, 10, and 13 pass; seed 13 reaches 116.28 MHz for 7.84 MH/s modeled. Hardware checks at 100.286 MHz returned invalid candidates. |
 | 5 production lanes at 111 MHz with seed search | Static-only, hardware invalid | Seed 6 passes at 117.67 MHz for 8.67 MH/s modeled, but SRAM-loaded hardware candidates failed host validation. |
-| `synth_gowin -nowidelut` on 5 production lanes | Tried, possible fallback | Seed 13 passes at 110.04 MHz with the same headline LUT/DFF percentage as baseline, but it is slower than the normal seed 13 build. |
+| `synth_gowin -nowidelut` on 5 production lanes | Useful at lower clock | At 100.286 MHz, seed 13 passes static timing but remains hardware-untrusted. At 54 MHz, it reduces packed LUT4 enough to produce a hardware-valid 5-lane image. |
 | 5 production lanes as one wide block | Tried, not helpful | `SPINAL_WIDE_LANES=1` increased area and failed placement for every tried comparison seed. |
 | Global `synth_gowin -noflatten` | Tried, not usable directly | Preserves hierarchy but produces JSON that nextpnr rejects during I/O packing in this flow. |
 | Selective/staged hierarchy preservation | Tried, not helpful | A custom top-only IO-pad flow reaches nextpnr, but area rises to 79% LUT4/70% DFF and placement fails. |
 | SRAM/distributed schedule taps | Useful for DFF pressure, costly for LUTs | 4x111 passes at 122.13 MHz and cuts DFF to 42%, but LUT4 rises to 87%. |
 | 61-cycle round skip | Tried, not helpful yet | Theoretical 4.9% cadence gain, but both paired and single-pair implementations lose too much Fmax or fail placement. |
 | Wider local pairs, 1x4 or 2x2 | Tried, not helpful so far | Worse Fmax and lower best passing rate than baseline. |
-| Simple timing fences/synchronizers | Tried, not helpful | Top-level digest staging and registered compressor-output `done` both passed simulation but worsened hardware validity at the known-good 2x81 point. |
+| Simple timing fences/synchronizers | Tried, not helpful | Top-level digest staging and registered compressor-output `done` both passed simulation but worsened hardware validity around the then-promising 2x81 point. |
 | `SPINAL_SHARED_K=0` | Tried, not helpful at 90 MHz | Removes shared round-constant fanout, but `2x90` still returned 10/10 invalid candidates. |
 | Lane start staggering | Tried, not helpful at 90 MHz | `SPINAL_LANE_START_STAGGER=16` keeps lanes out of exact start-cycle phase, but `2x90` still returned 10/10 invalid candidates. |
 | `synth_gowin -noalu` | Tried, not viable at 90 MHz | Avoids Gowin ALU carry-chain mapping, but the two-lane 90 MHz build only placed to about 65 MHz. |
@@ -324,10 +362,12 @@ Observed impact:
 
 - Add a flash-and-verify harness that logs lane count, clock profile, seed,
   Fmax, SRAM-load status, and strict host hash validity.
-- Add any remaining legal 20K clock profiles if needed, but current PLL points
-  already show `2x84` is marginal and `2x81` is the reliable two-lane point.
-- Re-run 3/4/5-lane builds at 81 MHz once the harness can classify results
-  without manual log reading. The earlier 4x81 build was interrupted.
+- Add any remaining legal 20K clock profiles if needed, but current hardware
+  checks show `2x67.5` is reliable while `2x81` can still false-positive under
+  longer strict runs.
+- Try `3x67.5` or `4x67.5` as comparison points if useful, but they do not beat
+  `5x54` in modeled rate. The tried 5-lane clock steps above 54 MHz returned
+  false positives, and `6x54 -nowidelut` failed legal placement.
 - Add first-class seed sweeping to `scripts/tools/sweep_spinal_variants.py` so
   seed searches can reuse a synthesized netlist and emit a compact summary.
 - `origin/sram-optimize` baseline sweep at 90/100.286/120 MHz.
@@ -345,9 +385,11 @@ Observed impact:
    `t1` and state-update arithmetic into another phase, then re-run cocotb and
    strict hardware hash checks. The split SHA/control-clock diagnostic did not
    improve the boundary.
-3. If throughput is the priority, move from deeper cycles toward carry-save
-   SHA round arithmetic or more lanes at a verified lower clock; a three-cycle
-   round may prove causality but will likely reduce H/s.
+3. If throughput is the priority, stop spending time on small flat 5-lane clock
+   bumps: `5x57` is already invalid on hardware, and no legal PLL point exists
+   between 54 and 57 MHz with the current `CLKOUT` path. The next meaningful
+   performance work is structural: reduce SHA round critical-path depth or area
+   enough that either 57+ MHz validates or 6 lanes at 54 MHz can place.
 4. Build a reusable flash plus `serial_smoke.py --require-target` harness and
    emit a CSV/Markdown result row per image.
 5. Treat 100+ MHz multi-lane static timing wins as untrusted until the host hash
