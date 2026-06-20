@@ -3,61 +3,65 @@
 ![TangMiner board](tangminer.png)
 
 TangMiner is an experimental Bitcoin hash engine for Sipeed Tang Nano FPGA
-boards. The supported hardware path is:
-
-1. Generate the FPGA design from SpinalHDL/Scala.
-2. Build a Gowin bitstream with the open OSS CAD Suite flow.
-3. Flash or load the bitstream with `openFPGALoader`.
-4. Run the C Stratum host program over the board USB-UART.
+boards. The FPGA scans nonce ranges and reports candidates over USB-UART; the
+host Stratum client handles pool work, full double-SHA256 validation, target
+checks, and share submission.
 
 This is a learning and integration project, not an economically useful miner.
-The FPGA scans nonces and reports candidate nonces. The host handles Stratum
-pool work, full double-SHA256 validation, target checks, and share submission.
 
-## Supported Boards
+## Current Status
 
-- Tang Nano 20K: default target, `TARGET=tangnano20k`.
-- Tang Nano 9K: available with `TARGET=tangnano9k`, but use a smaller lane
-  count such as `SPINAL_LANES=1` or `SPINAL_LANES=2`.
+Default target:
 
-The current 20K default is the best hardware-validated production build so far:
-5 lanes at `54.000 MHz`, built with `synth_gowin -nowidelut` and nextpnr seed
-`13`. It models at about `4.22 MH/s` and has passed strict host nonce
-validation on real hardware:
+- Board: Tang Nano 20K, `GW2AR-LV18QN88C8/I7`, 27 MHz input clock.
+- Design: SpinalHDL/Scala top module generated to Verilog.
+- Known-good build: 5 lanes at `54.000 MHz`.
+- Modeled rate: `54.000 MHz * 5 / 64 = 4.219 MH/s`.
+- Hardware validation: strict host nonce validation passes on real hardware.
+
+The open-source flow remains the hardware-validated default:
 
 ```text
-54.000 MHz * 5 lanes / 64 = 4.219 MH/s
+TARGET=tangnano20k
+SPINAL_LANES=5
+SPINAL_CLOCK_PROFILE=54m
+YOSYS_SYNTH_ARGS=-nowidelut
+NEXTPNR_SEED=13
 ```
+
+Official Gowin EDA timing results for the same 5-lane design:
+
+| Clock profile | Result | Routed Fmax |
+| --- | --- | --- |
+| `54m` | closes with margin | `59.776 MHz` |
+| `67m5` | barely closes | `67.505 MHz` |
+| `81m` | fails setup timing | `68.218 MHz` |
+
+Static timing closure is not hardware validation. Higher-clock images still
+need strict host nonce validation before use.
 
 ## Quick Start
 
-Set up local tools on Ubuntu 24.04:
+Install local tools on Ubuntu 24.04:
 
 ```sh
 scripts/setup.sh
 ```
 
-Build, flash, and run the host-side miner in one command:
+Build, flash, and mine:
 
 ```sh
 scripts/flash-and-mine.sh /dev/ttyUSB0
 ```
 
-For a non-persistent SRAM load instead of flash:
+Load to SRAM instead of persistent flash:
 
 ```sh
 scripts/flash-and-mine.sh --load /dev/ttyUSB0
 ```
 
-The same flow is exposed through Make:
-
-```sh
-make flash-and-mine SERIAL_PORT=/dev/ttyUSB0
-make load-and-mine SERIAL_PORT=/dev/ttyUSB0
-```
-
-For Tang Nano 20K boards, a slower JTAG clock and explicit FTDI channel are
-often more reliable:
+Tang Nano 20K boards are often more reliable with a slower JTAG clock and an
+explicit FTDI channel:
 
 ```sh
 OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000' \
@@ -70,54 +74,59 @@ If the 20K BL616 bridge is not in UART mode, open its console and select:
 choose uart
 ```
 
-## Build And Program Separately
+## Build
 
-Build the default Tang Nano 20K bitstream:
+Open-source bitstream flow:
 
 ```sh
 make build
+make load
+make flash
 ```
 
-Build a smaller Tang Nano 9K image:
+Official Gowin EDA flow:
+
+```sh
+make gowin-fmax
+make gowin-fmax SPINAL_CLOCK_PROFILE=67m5
+```
+
+The Gowin flow auto-detects `local/gowin-eda`, `../MIPS-FPGA/local/gowin-eda`,
+`../TMS9900-FPGA/local/gowin-eda`, and `../FocusTerm/local/gowin-eda`. Set
+`GOWIN_SH=/path/to/gw_sh` if Gowin is installed elsewhere.
+
+Load a Gowin-built bitstream to SRAM and start the host miner:
+
+```sh
+make gowin-load-and-mine SERIAL_PORT=/dev/ttyUSB0
+```
+
+For the higher-clock Gowin build:
+
+```sh
+make gowin-load-and-mine SERIAL_PORT=/dev/ttyUSB0 SPINAL_CLOCK_PROFILE=67m5
+```
+
+Use `gowin-flash-and-mine` instead if you want to write the bitstream to
+persistent FPGA flash.
+
+Tang Nano 9K is available as a smaller experimental target:
 
 ```sh
 make build TARGET=tangnano9k SPINAL_LANES=1
 ```
 
-Load to SRAM:
+Generated bitstreams are written under `build/`.
 
-```sh
-make load
-```
+## Run Host Miner
 
-Flash persistently:
-
-```sh
-make flash
-```
-
-Generated bitstreams are written under `build/`, for example:
-
-- `build/tangminer_spinal_tangnano20k.fs`
-- `build/tangminer_spinal_tangnano9k.fs`
-
-Use the same `TARGET`, `SPINAL_LANES`, clock, and synthesis options for
-`build`, `load`, and `flash`. If you omit them, the Makefile uses the target
-defaults.
-
-## Run The Host Program
-
-After the FPGA is loaded or flashed, run the C Stratum host against the board
-UART:
+After loading or flashing the FPGA:
 
 ```sh
 scripts/mine-hardware.sh /dev/ttyUSB0
 ```
 
-The wrapper builds `stratum/build/stratum-client` if needed and then connects
-to the default pool. The board UART is fixed at `115200 8N1`.
-
-Useful environment overrides:
+Useful overrides:
 
 ```sh
 STRATUM_HOST=pool.example.com
@@ -130,68 +139,38 @@ NO_SUBMIT=1
 VERBOSE=1
 ```
 
-Manual equivalent:
-
-```sh
-stratum/build/stratum-client \
-  --host tinyminer.m45core.com \
-  --port 3333 \
-  --user 3B86bWqfjdQeLEr8nkeeWU6ygksc2K7MoL.0M45 \
-  --pass x \
-  --serial-port /dev/ttyUSB0 \
-  --fpga-target quick21 \
-  --suggest-difficulty 0.00646187
-```
-
 ## Test Without Hardware
-
-Run the UART protocol smoke test:
 
 ```sh
 python scripts/tools/emulator_smoke.py
-```
-
-Mine through the Python fake FPGA and the real C Stratum host:
-
-```sh
 scripts/mine-software.sh
-```
-
-Mine through the Verilated SpinalHDL UART design:
-
-```sh
 scripts/mine-rtl.sh
-```
-
-Run the cocotb RTL simulator:
-
-```sh
 scripts/sim.sh
-```
-
-Run the C Stratum tests:
-
-```sh
 make -C stratum test
 make -C stratum smoke-fakes
 ```
 
-## Bitstream Options
+## Common Options
 
-The default 20K build uses:
+Modeled hashrate:
 
 ```text
-TARGET=tangnano20k
-SPINAL_LANES=5
-SPINAL_CLOCK_PROFILE=54m
-SPINAL_ENABLE_ECHO=0
-SPINAL_ENABLE_HARDCODED=0
-SPINAL_FIXED_CANDIDATE=2
-YOSYS_SYNTH_ARGS=-nowidelut
-NEXTPNR_SEED=13
+clock_hz * SPINAL_LANES / 64
 ```
 
-For a development-friendly image with UART echo and the hardcoded smoke job:
+`SPINAL_FIXED_CANDIDATE` values:
+
+| Value | Mode |
+| --- | --- |
+| unset | infer from job target |
+| `0` | always report |
+| `1` | `quick3` |
+| `2` | `quick21` |
+| `3` | `quick23` |
+| `4` | `quick26` |
+| `5` | `quick14` |
+
+Development image with UART echo and hardcoded smoke work:
 
 ```sh
 make build TARGET=tangnano20k \
@@ -202,42 +181,21 @@ make build TARGET=tangnano20k \
   SPINAL_FIXED_CANDIDATE=
 ```
 
-`SPINAL_FIXED_CANDIDATE` values are `0` for always report, `1` for `quick3`,
-`2` for `quick21`, `3` for `quick23`, `4` for `quick26`, and `5` for `quick14`.
-Leave it unset when you want the FPGA to infer the filter from each job target.
-
-Modeled hashrate is:
-
-```text
-clock_hz * SPINAL_LANES / 64
-```
-
-## Project Layout
+## Layout
 
 - `src/main/scala/tangminer/TangMiner.scala`: active SpinalHDL implementation.
-- `constr/`: Tang Nano board constraints.
-- `scripts/*.sh`: main user-facing setup, simulation, flash, and mining flows.
-- `scripts/helpers/`: lower-level shell helpers used by scripts and Make.
-- `scripts/tools/`: protocol emulator, UART smoke tests, and build utilities.
+- `constr/`: board constraints.
+- `scripts/`: setup, build, flash, simulation, and mining helpers.
 - `stratum/`: C Stratum client and fake pool/FPGA test tools.
-- `sim/cocotb/`: UART-level RTL tests against generated SpinalHDL Verilog.
-- `docs/`: detailed protocol, hardware, emulation, and bring-up notes.
+- `sim/cocotb/`: UART-level RTL tests.
+- `docs/`: protocol, hardware, emulation, and bring-up notes.
 
-Start with these docs when you need more detail:
+Start with:
 
 - [docs/bringup.md](docs/bringup.md)
 - [docs/uart-protocol.md](docs/uart-protocol.md)
 - [docs/software-emulation.md](docs/software-emulation.md)
 - [docs/hardware-overview.md](docs/hardware-overview.md)
-
-## Hardware Notes
-
-- Tang Nano 20K FPGA: `GW2AR-LV18QN88C8/I7`, family `GW2A-18C`.
-- Tang Nano 9K FPGA: `GW1NR-LV9QN88PC6/I5`, family `GW1N-9C`.
-- Board clock: `27 MHz`.
-- 20K default hash clock: internal rPLL to `54.000 MHz`.
-- 9K clock path: direct `27 MHz` board clock.
-- Protocol: binary UART packets starting with `TN`.
 
 ## License
 

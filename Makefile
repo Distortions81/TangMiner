@@ -4,6 +4,7 @@ ifeq ($(TARGET),tangnano9k)
 BOARD := tangnano9k
 FAMILY := GW1N-9C
 DEVICE := GW1NR-LV9QN88PC6/I5
+GOWIN_DEVICE_VERSION ?=
 CST := constr/tangnano9k.cst
 SPINAL_USE_PLL ?= 0
 SPINAL_CLOCK_PROFILE ?= 27m
@@ -11,6 +12,7 @@ else ifeq ($(TARGET),tangnano20k)
 BOARD := tangnano20k
 FAMILY := GW2A-18C
 DEVICE := GW2AR-LV18QN88C8/I7
+GOWIN_DEVICE_VERSION ?= C
 CST := constr/tangnano20k.cst
 SPINAL_USE_PLL ?= 1
 SPINAL_CLOCK_PROFILE ?= 54m
@@ -131,6 +133,19 @@ YOSYS := $(TOOLBIN)/yosys
 NEXTPNR := $(TOOLBIN)/nextpnr-himbaechel
 GOWIN_PACK := $(TOOLBIN)/gowin_pack
 OPENFPGALOADER := $(TOOLBIN)/openFPGALoader
+GOWIN_EDA ?= $(if $(wildcard local/gowin-eda/IDE/bin/gw_sh),local/gowin-eda,$(if $(wildcard ../MIPS-FPGA/local/gowin-eda/IDE/bin/gw_sh),../MIPS-FPGA/local/gowin-eda,$(if $(wildcard ../TMS9900-FPGA/local/gowin-eda/IDE/bin/gw_sh),../TMS9900-FPGA/local/gowin-eda,$(if $(wildcard ../FocusTerm/local/gowin-eda/IDE/bin/gw_sh),../FocusTerm/local/gowin-eda,))))
+GOWIN_SH ?= $(if $(strip $(GOWIN_EDA)),$(GOWIN_EDA)/IDE/bin/gw_sh,gw_sh)
+GOWIN_SH_RUNNER ?= scripts/gowin-sh-env.sh
+GOWIN_PLACE_OPTION ?= 2
+GOWIN_ROUTE_OPTION ?= 1
+GOWIN_ROUTE_MAXFAN ?= 23
+GOWIN_CLOCK_ROUTE_ORDER ?= 1
+GOWIN_CORRECT_HOLD ?= 0
+GOWIN_REPLICATE_RESOURCES ?= 1
+GOWIN_PROJECT_NAME := tangminer_gowin_$(TARGET)_lanes$(SPINAL_LANES)_$(SPINAL_CLOCK_PROFILE)
+GOWIN_PROJECT_DIR := $(BUILD)/gowin/$(GOWIN_PROJECT_NAME)
+GOWIN_SDC := $(BUILD)/gowin/constraints/$(GOWIN_PROJECT_NAME).sdc
+GOWIN_FS := $(GOWIN_PROJECT_DIR)/impl/pnr/$(GOWIN_PROJECT_NAME).fs
 SBT ?= $(if $(wildcard local/sbt/bin/sbt),$(abspath local/sbt/bin/sbt),sbt)
 BOOTSTRAP_PYTHON ?= python3
 PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,$(if $(wildcard .venv/bin/python),.venv/bin/python,python3))
@@ -144,7 +159,7 @@ SPINAL_SIM_ENABLE_ECHO ?= 1
 SPINAL_SIM_ENABLE_HARDCODED ?= 1
 SPINAL_SIM_FIXED_CANDIDATE ?=
 
-.PHONY: all build build-spinal spinal-verilog spinal-sim-verilog sweep-spinal load flash flash-and-mine load-and-mine clean sim setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine mine mine-software mine-rtl mine-hardware stratum-client stratum-test stratum-mine-software stratum-mine-rtl stratum-mine-hardware stratum-smoke-rtl check-cocotb sim-cocotb verilator-pty FORCE
+.PHONY: all build build-spinal spinal-verilog spinal-sim-verilog gowin-build gowin-fmax check-gowin-tools gowin-load gowin-flash gowin-load-and-mine gowin-flash-and-mine sweep-spinal load flash flash-and-mine load-and-mine clean sim setup-emulation install-ubuntu launch emu-smoke emu-pty software-mine hardware-mine mine mine-software mine-rtl mine-hardware stratum-client stratum-test stratum-mine-software stratum-mine-rtl stratum-mine-hardware stratum-smoke-rtl check-cocotb sim-cocotb verilator-pty FORCE
 
 all: build
 
@@ -230,6 +245,55 @@ $(SPINAL_PREFIX)_pnr.json: $(SPINAL_PREFIX).json $(CST)
 
 $(SPINAL_PREFIX).fs: $(SPINAL_PREFIX)_pnr.json
 	$(GOWIN_PACK) -d $(FAMILY) -o $@ $<
+
+$(GOWIN_SDC): FORCE | $(BUILD)/.dir
+	mkdir -p $(dir $@)
+	@period="$$( $(PYTHON) -c 'print("%.3f" % (1000.0 / float("$(SPINAL_CLOCK_MHZ)")))' )"; \
+	half="$$( $(PYTHON) -c 'print("%.3f" % ((1000.0 / float("$(SPINAL_CLOCK_MHZ)")) / 2.0))' )"; \
+	{ \
+	  echo "create_clock -name clk27 -period 37.037 -waveform {0 18.519} [get_ports {clk}]"; \
+	  echo "create_clock -name systemClock -period $$period -waveform {0 $$half} [get_nets {gowinRpllFrom27Mhz_CLKOUT}]"; \
+	} > $@
+
+check-gowin-tools:
+	@command -v "$(GOWIN_SH)" >/dev/null 2>&1 || { echo "Missing Official Gowin EDA gw_sh. Set GOWIN_SH=/path/to/gw_sh."; exit 1; }
+	@"$(GOWIN_SH)" -v >/dev/null 2>&1 || "$(GOWIN_SH)" -h >/dev/null 2>&1 || true
+
+gowin-build: $(SPINAL_SRC) $(CST) $(GOWIN_SDC) scripts/gowin-build.sh scripts/gowin-sh-env.sh
+	GOWIN_SH="$(GOWIN_SH)" \
+	GOWIN_SH_RUNNER="$(GOWIN_SH_RUNNER)" \
+	GOWIN_PROJECT_DIR="$(GOWIN_PROJECT_DIR)" \
+	GOWIN_PROJECT_NAME="$(GOWIN_PROJECT_NAME)" \
+	DEVICE="$(DEVICE)" \
+	GOWIN_DEVICE_VERSION="$(GOWIN_DEVICE_VERSION)" \
+	TOP="$(TOP)" \
+	CST="$(CST)" \
+	SDC="$(GOWIN_SDC)" \
+	RTL_SRC="$(SPINAL_SRC)" \
+	GOWIN_PLACE_OPTION="$(GOWIN_PLACE_OPTION)" \
+	GOWIN_ROUTE_OPTION="$(GOWIN_ROUTE_OPTION)" \
+	GOWIN_ROUTE_MAXFAN="$(GOWIN_ROUTE_MAXFAN)" \
+	GOWIN_CLOCK_ROUTE_ORDER="$(GOWIN_CLOCK_ROUTE_ORDER)" \
+	GOWIN_CORRECT_HOLD="$(GOWIN_CORRECT_HOLD)" \
+	GOWIN_REPLICATE_RESOURCES="$(GOWIN_REPLICATE_RESOURCES)" \
+	bash scripts/gowin-build.sh
+
+gowin-fmax: gowin-build
+	@tr="$(GOWIN_PROJECT_DIR)/impl/pnr/$(GOWIN_PROJECT_NAME).tr"; \
+	if [ ! -f "$$tr" ]; then echo "No Gowin timing report found: $$tr"; exit 1; fi; \
+	$(PYTHON) scripts/tools/gowin_timing_summary.py "$$tr"
+
+gowin-load: gowin-build
+	$(OPENFPGALOADER) -b $(BOARD) $(GOWIN_FS)
+
+gowin-flash: gowin-build
+	$(OPENFPGALOADER) -b $(BOARD) -f $(GOWIN_FS)
+
+gowin-load-and-mine: gowin-load
+	scripts/mine-hardware.sh "$(SERIAL_PORT)"
+
+gowin-flash-and-mine: gowin-flash
+	scripts/mine-hardware.sh "$(SERIAL_PORT)"
 
 load: $(SPINAL_PREFIX).fs
 	$(OPENFPGALOADER) -b $(BOARD) $<
