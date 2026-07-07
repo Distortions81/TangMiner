@@ -18,6 +18,9 @@ Default target:
 - Known-good build: 5 lanes at `54.000 MHz`.
 - Modeled rate: `54.000 MHz * 5 / 64 = 4.219 MH/s`.
 - Hardware validation: strict host nonce validation passes on real hardware.
+- Experimental round-skip mode: `SPINAL_ROUND_SKIP=1` models at
+  `54.000 MHz * 5 / 61 = 4.426 MH/s`, but is not the default until hardware
+  validation proves it.
 
 The open-source flow remains the hardware-validated default:
 
@@ -25,6 +28,7 @@ The open-source flow remains the hardware-validated default:
 TARGET=tangnano20k
 SPINAL_LANES=5
 SPINAL_CLOCK_PROFILE=54m
+SPINAL_ROUND_SKIP=0
 YOSYS_SYNTH_ARGS=-nowidelut
 NEXTPNR_SEED=13
 ```
@@ -146,6 +150,7 @@ python scripts/tools/emulator_smoke.py
 scripts/mine-software.sh
 scripts/mine-rtl.sh
 scripts/sim.sh
+SPINAL_ROUND_SKIP=1 scripts/sim.sh
 make -C stratum test
 make -C stratum smoke-fakes
 ```
@@ -155,8 +160,15 @@ make -C stratum smoke-fakes
 Modeled hashrate:
 
 ```text
-clock_hz * SPINAL_LANES / 64
+clock_hz * SPINAL_LANES / lane_period_cycles
 ```
+
+`lane_period_cycles` is `64` for the validated default. `SPINAL_ROUND_SKIP=1`
+uses a 61-cycle first-pass cadence by precomputing rounds 0..2 once per job and
+stopping the second pass at round 60 for the low-word candidate filter. Treat
+round-skip and `SPINAL_CSA_ROUND=1` builds as experimental until
+`serial_smoke.py --target quick21 --count 100 --require-target` and quick14/23
+spot checks pass on real hardware.
 
 `SPINAL_FIXED_CANDIDATE` values:
 

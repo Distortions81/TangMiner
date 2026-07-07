@@ -207,6 +207,7 @@ int main(int argc, char **argv) {
 
     double benchmark_seconds = 0.0;
     int lane_count = 4;
+    int lane_period_cycles = 64;
     for (int i = 1; i < argc; i++) {
         if (arg_starts_with(argv[i], "--benchmark-seconds=")) {
             benchmark_seconds = std::strtod(argv[i] + std::strlen("--benchmark-seconds="), nullptr);
@@ -216,10 +217,17 @@ int main(int argc, char **argv) {
             lane_count = std::atoi(argv[i] + std::strlen("--lanes="));
         } else if (std::strcmp(argv[i], "--lanes") == 0 && i + 1 < argc) {
             lane_count = std::atoi(argv[++i]);
+        } else if (arg_starts_with(argv[i], "--lane-period-cycles=")) {
+            lane_period_cycles = std::atoi(argv[i] + std::strlen("--lane-period-cycles="));
+        } else if (std::strcmp(argv[i], "--lane-period-cycles") == 0 && i + 1 < argc) {
+            lane_period_cycles = std::atoi(argv[++i]);
         }
     }
     if (lane_count <= 0) {
         lane_count = 4;
+    }
+    if (lane_period_cycles <= 0) {
+        lane_period_cycles = 64;
     }
 
     Vtop top;
@@ -237,13 +245,15 @@ int main(int argc, char **argv) {
         }
         const double elapsed = monotonic_seconds() - start;
         const double cycles_per_second = static_cast<double>(cycles) / elapsed;
-        const double hashes_per_second = cycles_per_second * static_cast<double>(lane_count) / 64.0;
+        const double hashes_per_second =
+            cycles_per_second * static_cast<double>(lane_count) / static_cast<double>(lane_period_cycles);
         std::printf(
-            "rtl_benchmark seconds=%.3f cycles=%llu cycles_per_second=%.2f lane_count=%d hashes_per_second=%.2f\n",
+            "rtl_benchmark seconds=%.3f cycles=%llu cycles_per_second=%.2f lane_count=%d lane_period_cycles=%d hashes_per_second=%.2f\n",
             elapsed,
             static_cast<unsigned long long>(cycles),
             cycles_per_second,
             lane_count,
+            lane_period_cycles,
             hashes_per_second);
         std::fflush(stdout);
         top.final();

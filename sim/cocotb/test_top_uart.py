@@ -9,6 +9,7 @@ from tangminer_emulator import (
     GENESIS_EXPECTED_HASH_NONCE_ZERO,
     GENESIS_HEADER,
     QUICK3_TARGET,
+    QUICK14_TARGET,
     bitcoin_hash,
     build_job_from_header,
     encode_job_payload,
@@ -22,6 +23,7 @@ from tangminer_emulator import (
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
 HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "100286000"))
 LANE_COUNT = int(os.environ.get("LANE_COUNT", "5"))
+EXPECTED_LANE_PERIOD_CYCLES = int(os.environ.get("EXPECTED_LANE_PERIOD_CYCLES", "0"))
 
 
 def _clock(signal, period, unit):
@@ -68,8 +70,8 @@ async def _wait_for_tx_start(dut, max_cycles=20_000):
     raise AssertionError("timed out waiting for UART TX start bit")
 
 
-async def _uart_read_byte(dut):
-    await _wait_for_tx_start(dut)
+async def _uart_read_byte(dut, max_cycles=20_000):
+    await _wait_for_tx_start(dut, max_cycles=max_cycles)
     await _ticks(dut, CLKS_PER_BIT + CLKS_PER_BIT // 2)
 
     value = 0
@@ -82,8 +84,10 @@ async def _uart_read_byte(dut):
     return value
 
 
-async def _uart_read(dut, length):
-    return bytes([await _uart_read_byte(dut) for _ in range(length)])
+async def _uart_read(dut, length, max_cycles=20_000):
+    first = await _uart_read_byte(dut, max_cycles=max_cycles)
+    rest = [await _uart_read_byte(dut) for _ in range(length - 1)]
+    return bytes([first] + rest)
 
 
 def _resolve_signal(dut, *names):
@@ -165,6 +169,24 @@ async def top_hashes_genesis_nonce_three(dut):
 
 
 @cocotb.test()
+async def top_hashes_genesis_nonce_quick14(dut):
+    await _start_clock(dut)
+
+    all_ones_job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
+    expected_hash = bitcoin_hash(all_ones_job, 34368)
+    job = build_job_from_header(GENESIS_HEADER, QUICK14_TARGET)
+    payload = encode_job_payload(job)
+
+    await _uart_write(dut, b"TNJ" + payload)
+
+    response = await _uart_read(dut, 5, max_cycles=600_000)
+    assert response[:1] == b"F"
+    assert response[1:5] == b"\x00\x00\x86\x40"
+    assert meets_target(expected_hash, QUICK14_TARGET)
+    assert share_difficulty(expected_hash) >= target_difficulty(QUICK14_TARGET)
+
+
+@cocotb.test()
 async def top_reports_cycle_accurate_hashrate(dut):
     await _start_clock(dut)
 
@@ -194,6 +216,10 @@ async def top_reports_cycle_accurate_hashrate(dut):
     assert min(lane_deltas) == max(lane_deltas), f"non-steady lane cycle deltas: {lane_deltas}"
 
     lane_period_cycles = lane_deltas[0]
+    if EXPECTED_LANE_PERIOD_CYCLES:
+        assert lane_period_cycles == EXPECTED_LANE_PERIOD_CYCLES, (
+            f"expected lane period {EXPECTED_LANE_PERIOD_CYCLES}, got {lane_period_cycles}"
+        )
     cycles_per_nonce = lane_period_cycles / LANE_COUNT
     hashes_per_second = HARDWARE_CLOCK_HZ * LANE_COUNT / lane_period_cycles
     dut._log.info(

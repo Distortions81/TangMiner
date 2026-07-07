@@ -16,6 +16,8 @@ At a high level:
   `0..4`, and each lane increments by `5`.
 - Each lane has two iterative 64-round `Sha256Compress` engines: one for the
   header final-block pass and one for the second SHA-256 pass.
+- Experimental round-skip mode precomputes first-pass rounds 0..2 once per job
+  and starts nonce-dependent work at round 3.
 - Each lane adds the SHA-256 feed-forward state outside the compressors: job
   midstate for pass one, SHA-256 IV for pass two.
 - The final digest is checked in Bitcoin's byte-reversed proof-of-work ordering
@@ -31,6 +33,11 @@ second-pass compressors run at the same time. With five lanes, the aggregate
 chip cadence is one tested nonce every `12.8` clocks, or about `4.219 MH/s`.
 The selected 20K build uses `synth_gowin -nowidelut` with nextpnr seed `13` and
 has passed strict host nonce validation on real hardware.
+
+With `SPINAL_ROUND_SKIP=1`, each lane launches a nonce every `61` clocks by
+skipping the nonce-independent first-pass rounds and deriving the low candidate
+word after second-pass round 60. That mode is experimental until strict host
+nonce validation passes on real hardware.
 
 These boxes are logical hardware blocks. After synthesis, they become Gowin
 FPGA LUTs, flip-flops, carry chains, IO buffers, and routing rather than

@@ -217,6 +217,12 @@ lane therefore produces one tested nonce every `64` clocks after the initial
 fill. With five lanes in parallel, the aggregate chip cadence is one tested
 nonce every `12.8` clocks.
 
+With `SPINAL_ROUND_SKIP=1`, the lane prepares first-pass rounds 0..2 once after
+each job load, then starts nonce-dependent first-pass work at round 3. The
+second pass stops at round 60 because the final low digest word can be derived
+from that working state. This reduces the steady lane cadence to `61` clocks,
+but remains experimental until hardware nonce validation passes.
+
 ## Source Pointers
 
 - `Sha256Compress` is implemented in `src/main/scala/tangminer/TangMiner.scala`.

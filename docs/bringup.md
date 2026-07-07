@@ -31,6 +31,17 @@ The current default 20K model should report about `4.22 MH/s`:
 54,000,000 Hz * 5 lanes / 64 = 4.219 MH/s
 ```
 
+The experimental round-skip path changes the modeled cadence to 61 clocks per
+lane nonce:
+
+```text
+SPINAL_ROUND_SKIP=1 scripts/sim.sh
+54,000,000 Hz * 5 lanes / 61 = 4.426 MH/s
+```
+
+Do not treat that higher rate as hardware-valid until strict serial smoke tests
+pass on the FPGA.
+
 ## 3. Flash Or Load And Mine
 
 For the normal persistent flow:

@@ -81,13 +81,34 @@ def tool_defaults():
     return env
 
 
+def make_var_value(args, name, default=""):
+    value = os.environ.get(name, default)
+    for item in args.make_var:
+        key, sep, candidate = item.partition("=")
+        if sep and key == name:
+            value = candidate
+    return value
+
+
+def truthy(value):
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 def build_variant(args, lanes, profile):
     clock_mhz = PROFILE_CLOCK_MHZ[profile]
-    variant = f"lanes{lanes}_{profile}"
+    round_skip = truthy(make_var_value(args, "SPINAL_ROUND_SKIP", "0"))
+    csa_round = truthy(make_var_value(args, "SPINAL_CSA_ROUND", "0"))
+    lane_period_cycles = 61 if round_skip else 64
+    suffix = ""
+    if round_skip:
+        suffix += "_skip1"
+    if csa_round:
+        suffix += "_csa1"
+    variant = f"lanes{lanes}_{profile}{suffix}"
     build_dir = REPO_ROOT / args.build_root / variant
     build_dir.mkdir(parents=True, exist_ok=True)
     log_path = build_dir / "build.log"
-    modeled_hps = clock_mhz * 1_000_000.0 * lanes / 64.0
+    modeled_hps = clock_mhz * 1_000_000.0 * lanes / lane_period_cycles
 
     result = SweepResult(
         lanes=lanes,

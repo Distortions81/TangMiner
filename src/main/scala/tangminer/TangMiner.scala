@@ -23,12 +23,16 @@ case class TangMinerHardwareOptions(
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
-  minimizeShaReset: Boolean = false
+  minimizeShaReset: Boolean = false,
+  roundSkip: Boolean = false,
+  csaRound: Boolean = false,
+  externalRoundConstants: Boolean = false
 ) {
   fixedCandidateMode.foreach(mode =>
     require(mode >= 0 && mode <= 5, s"fixedCandidateMode must be 0..5, got $mode")
   )
   require(!(twoCycleRound && threeCycleRound), "twoCycleRound and threeCycleRound are mutually exclusive")
+  require(!(csaRound && (twoCycleRound || threeCycleRound)), "csaRound only applies to the one-cycle round datapath")
 }
 
 object GowinClockProfiles {
@@ -130,6 +134,25 @@ object Sha256 {
   def bigSigma1(x: UInt): UInt = (rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25)).resize(32)
   def smallSigma0(x: UInt): UInt = (rotr(x, 7) ^ rotr(x, 18) ^ shr(x, 3)).resize(32)
   def smallSigma1(x: UInt): UInt = (rotr(x, 17) ^ rotr(x, 19) ^ shr(x, 10)).resize(32)
+
+  def add32Csa(values: UInt*): UInt = {
+    require(values.nonEmpty, "add32Csa requires at least one operand")
+
+    def carrySave3(a: UInt, b: UInt, c: UInt): Seq[UInt] = {
+      val sum = (a ^ b ^ c).resize(32)
+      val carry = ((a & b) | (a & c) | (b & c)).resize(32)
+      Seq(sum, (carry << 1).resize(32))
+    }
+
+    var operands = values.map(_.resize(32))
+    while (operands.length > 2) {
+      operands = operands.grouped(3).flatMap {
+        case Seq(a, b, c) => carrySave3(a, b, c)
+        case rest => rest
+      }.toSeq
+    }
+    operands.reduce((left, right) => (left + right).resize(32))
+  }
 
   def concatWords(words: Seq[UInt]): Bits = words.map(_.asBits).reduce(_ ## _)
 
@@ -308,11 +331,21 @@ class Sha256CompressWords(
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
-  minimizeResetFanout: Boolean = false
+  minimizeResetFanout: Boolean = false,
+  dynamicRoundWindow: Boolean = false,
+  fixedStartRound: Int = 0,
+  fixedStopRound: Int = 63,
+  csaRound: Boolean = false
 ) extends Component {
+  require(!(csaRound && (twoCycleRound || threeCycleRound)), "csaRound only applies to the one-cycle round datapath")
+  require(fixedStartRound >= 0 && fixedStartRound < 64, s"fixedStartRound must be 0..63, got $fixedStartRound")
+  require(fixedStopRound >= fixedStartRound && fixedStopRound < 64, s"fixedStopRound must be fixedStartRound..63, got $fixedStopRound")
+
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
+    val startRound = in UInt(6 bits)
+    val stopRound = in UInt(6 bits)
     val kWord = in UInt(32 bits)
     val stateIn = in Bits(256 bits)
     val words = in Vec(UInt(32 bits), 16)
@@ -325,10 +358,13 @@ class Sha256CompressWords(
   val w = Vec(Reg(UInt(32 bits)) init 0, 16)
   val wRound = Reg(UInt(32 bits)) init 0
   val round = Reg(UInt(6 bits)) init 0
+  val stopRoundReg = if (dynamicRoundWindow) Reg(UInt(6 bits)) init 63 else null
   val busyReg = Reg(Bool()) init False
   val kWords = Vec(Sha256.K.map(Sha256.word))
   val kWordReg = Reg(UInt(32 bits)) init U(Sha256.K.head, 32 bits)
   val selectedKWord = if (registerRoundConstant) kWordReg else io.kWord
+  val startRoundValue = if (dynamicRoundWindow) io.startRound else U(fixedStartRound, 6 bits)
+  val stopRoundValue = if (dynamicRoundWindow) stopRoundReg else U(fixedStopRound, 6 bits)
 
   def loadState(): Unit = {
     a := io.stateIn(255 downto 224).asUInt
@@ -345,10 +381,13 @@ class Sha256CompressWords(
     }
     wRound := io.words(0)
     if (registerRoundConstant) {
-      kWordReg := kWords(0)
+      kWordReg := kWords(startRoundValue.resized)
     }
 
-    round := 0
+    round := startRoundValue
+    if (dynamicRoundWindow) {
+      stopRoundReg := io.stopRound
+    }
     busyReg := True
   }
 
@@ -359,15 +398,32 @@ class Sha256CompressWords(
       wRound := 0
     }
     round := 0
+    if (dynamicRoundWindow) {
+      stopRoundReg := 63
+    }
     busyReg := False
   }
 
-  val wNext = (Sha256.smallSigma1(w(14)) + w(9) + Sha256.smallSigma0(w(1)) + w(0)).resize(32)
+  val t1Terms = Seq(h, Sha256.bigSigma1(e), Sha256.ch(e, f, g), selectedKWord, wRound)
+  val t2Terms = Seq(Sha256.bigSigma0(a), Sha256.maj(a, b, c))
+  val wNext = if (csaRound) {
+    Sha256.add32Csa(Sha256.smallSigma1(w(14)), w(9), Sha256.smallSigma0(w(1)), w(0))
+  } else {
+    (Sha256.smallSigma1(w(14)) + w(9) + Sha256.smallSigma0(w(1)) + w(0)).resize(32)
+  }
   val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + selectedKWord + wRound).resize(32)
   val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
-  val aNext = (t1 + t2).resize(32)
-  val eNext = (d + t1).resize(32)
-  val finalRound = busyReg && round === 63
+  val aNext = if (csaRound) {
+    Sha256.add32Csa((t1Terms ++ t2Terms): _*)
+  } else {
+    (t1 + t2).resize(32)
+  }
+  val eNext = if (csaRound) {
+    Sha256.add32Csa((Seq(d) ++ t1Terms): _*)
+  } else {
+    (d + t1).resize(32)
+  }
+  val finalRound = busyReg && round === stopRoundValue
   val finalWork = Sha256.concatWords(Seq(aNext, a, b, c, eNext, e, f, g))
 
   io.roundOut := round
@@ -453,7 +509,7 @@ class Sha256CompressWords(
             b := a
             a := aSplitNext
 
-            when(round === 63) {
+            when(round === stopRoundValue) {
               busyReg := False
               round := 0
               phase := Phase.prepare
@@ -527,7 +583,7 @@ class Sha256CompressWords(
             b := a
             a := aSplitNext
 
-            when(round === 63) {
+            when(round === stopRoundValue) {
               busyReg := False
               round := 0
               phase := Phase.compute
@@ -589,7 +645,7 @@ class Sha256CompressWords(
         b := a
         a := aNext
 
-        when(round === 63) {
+        when(round === stopRoundValue) {
           busyReg := False
         } otherwise {
           if (registerRoundConstant) {
@@ -616,68 +672,356 @@ class Sha256BitcoinFirstPass(
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
-  minimizeShaReset: Boolean = false
+  minimizeShaReset: Boolean = false,
+  roundSkip: Boolean = false,
+  csaRound: Boolean = false
+) extends Component {
+  val io = new Bundle {
+    val reset = in Bool()
+    val prepare = in Bool()
+    val start = in Bool()
+    val kWord = in UInt(32 bits)
+    val midstate = in Bits(256 bits)
+    val tail = in Bits(96 bits)
+    val nonce = in UInt(32 bits)
+    val ready = out Bool()
+    val done = out Bool()
+    val round = out UInt(6 bits)
+    val digest = out Bits(256 bits)
+  }
+
+  val core = new Sha256CompressWords(
+    registerOutput = registerOutputs,
+    twoCycleRound = twoCycleRound,
+    threeCycleRound = threeCycleRound,
+    registerRoundConstant = registerRoundConstant,
+    minimizeResetFanout = minimizeShaReset,
+    dynamicRoundWindow = roundSkip,
+    csaRound = csaRound
+  )
+  io.round := core.io.roundOut
+
+  def driveOutputs(doneRaw: Bool, digestRaw: Bits): Unit = {
+    if (registerOutputs) {
+      val doneReg = Reg(Bool()) init False
+      val digestReg = Reg(Bits(256 bits)) init 0
+
+      io.done := doneReg
+      io.digest := digestReg
+
+      when(io.reset) {
+        doneReg := False
+        digestReg := 0
+      } otherwise {
+        doneReg := doneRaw
+        when(doneRaw) {
+          digestReg := digestRaw
+        }
+      }
+    } else {
+      io.done := doneRaw
+      io.digest := digestRaw
+    }
+  }
+
+  val tail0 = io.tail(95 downto 64).asUInt
+  val tail1 = io.tail(63 downto 32).asUInt
+  val tail2 = io.tail(31 downto 0).asUInt
+  val padStart = U(BigInt("80000000", 16), 32 bits)
+  val firstLength = U(BigInt("00000280", 16), 32 bits)
+  val zero = U(0, 32 bits)
+
+  if (roundSkip) {
+    object State extends SpinalEnum {
+      val idle, preparing, ready, hashing = newElement()
+    }
+
+    val state = Reg(State()) init State.idle
+    val prefixState = Reg(Bits(256 bits)) init 0
+
+    val w16 = (Sha256.smallSigma0(tail1) + tail0).resize(32)
+    val w17 = (Sha256.smallSigma1(firstLength) + Sha256.smallSigma0(tail2) + tail1).resize(32)
+    val w18 = (Sha256.smallSigma1(w16) + Sha256.smallSigma0(io.nonce) + tail2).resize(32)
+
+    val prefixWords = Vec(Seq(
+      tail0,
+      tail1,
+      tail2,
+      zero,
+      padStart,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      firstLength
+    ))
+    val hashWords = Vec(Seq(
+      io.nonce,
+      padStart,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      firstLength,
+      w16,
+      w17,
+      w18
+    ))
+
+    val prepareStart = io.prepare && (state === State.idle || state === State.ready)
+    val hashStart = io.start && (state === State.ready || (state === State.hashing && core.io.done))
+    val coreWords = Vec((0 until 16).map(i => Mux(prepareStart, prefixWords(i), hashWords(i))))
+
+    core.io.reset := io.reset
+    core.io.start := prepareStart || hashStart
+    core.io.startRound := Mux(prepareStart, U(0, 6 bits), U(3, 6 bits))
+    core.io.stopRound := Mux(prepareStart, U(2, 6 bits), U(63, 6 bits))
+    core.io.kWord := io.kWord
+    core.io.stateIn := Mux(prepareStart, io.midstate, prefixState)
+    core.io.words := coreWords
+
+    when(io.reset) {
+      state := State.idle
+      prefixState := 0
+    } otherwise {
+      when(prepareStart) {
+        state := State.preparing
+      } elsewhen(hashStart) {
+        state := State.hashing
+      } elsewhen(state === State.preparing && core.io.done) {
+        prefixState := core.io.workOut
+        state := State.ready
+      } elsewhen(state === State.hashing && core.io.done) {
+        state := State.ready
+      }
+    }
+
+    io.ready := state === State.ready || (state === State.hashing && core.io.done)
+    driveOutputs(state === State.hashing && core.io.done, Sha256Pass.addFeedForward(io.midstate, core.io.workOut))
+  } else {
+    val words = Vec(Seq(
+      tail0,
+      tail1,
+      tail2,
+      io.nonce,
+      padStart,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      zero,
+      firstLength
+    ))
+
+    core.io.reset := io.reset
+    core.io.start := io.start
+    core.io.startRound := U(0, 6 bits)
+    core.io.stopRound := U(63, 6 bits)
+    core.io.kWord := io.kWord
+    core.io.stateIn := io.midstate
+    core.io.words := words
+
+    io.ready := True
+    driveOutputs(core.io.done, Sha256Pass.addFeedForward(io.midstate, core.io.workOut))
+  }
+}
+
+class Sha256BitcoinFirstPassPrefix(
+  registerOutputs: Boolean = false,
+  twoCycleRound: Boolean = false,
+  threeCycleRound: Boolean = false,
+  registerRoundConstant: Boolean = false,
+  minimizeShaReset: Boolean = false,
+  csaRound: Boolean = false
+) extends Component {
+  val io = new Bundle {
+    val reset = in Bool()
+    val start = in Bool()
+    val midstate = in Bits(256 bits)
+    val tail = in Bits(96 bits)
+    val ready = out Bool()
+    val prefixState = out Bits(256 bits)
+    val tail2 = out UInt(32 bits)
+    val w16 = out UInt(32 bits)
+    val w17 = out UInt(32 bits)
+  }
+
+  val tail0 = io.tail(95 downto 64).asUInt
+  val tail1 = io.tail(63 downto 32).asUInt
+  val tail2 = io.tail(31 downto 0).asUInt
+  val firstLength = U(BigInt("00000280", 16), 32 bits)
+  val w16 = (Sha256.smallSigma0(tail1) + tail0).resize(32)
+  val w17 = (Sha256.smallSigma1(firstLength) + Sha256.smallSigma0(tail2) + tail1).resize(32)
+
+  val kVec = Vec(Sha256.K.map(Sha256.word))
+  val a, b, c, d, e, f, g, h = Reg(UInt(32 bits)) init 0
+  val round = Reg(UInt(2 bits)) init 0
+  val busyReg = Reg(Bool()) init False
+  val readyReg = Reg(Bool()) init False
+  val tail0Reg = Reg(UInt(32 bits)) init 0
+  val tail1Reg = Reg(UInt(32 bits)) init 0
+  val tail2Reg = Reg(UInt(32 bits)) init 0
+  val w16Reg = Reg(UInt(32 bits)) init 0
+  val w17Reg = Reg(UInt(32 bits)) init 0
+
+  val selectedW = UInt(32 bits)
+  selectedW := tail0Reg
+  switch(round) {
+    is(U(1, 2 bits)) {
+      selectedW := tail1Reg
+    }
+    is(U(2, 2 bits)) {
+      selectedW := tail2Reg
+    }
+  }
+
+  val selectedK = kVec(round.resized)
+  val t1Terms = Seq(h, Sha256.bigSigma1(e), Sha256.ch(e, f, g), selectedK, selectedW)
+  val t2Terms = Seq(Sha256.bigSigma0(a), Sha256.maj(a, b, c))
+  val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) + selectedK + selectedW).resize(32)
+  val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
+  val aNext = if (csaRound) Sha256.add32Csa((t1Terms ++ t2Terms): _*) else (t1 + t2).resize(32)
+  val eNext = if (csaRound) Sha256.add32Csa((Seq(d) ++ t1Terms): _*) else (d + t1).resize(32)
+  val finalWork = Sha256.concatWords(Seq(aNext, a, b, c, eNext, e, f, g))
+
+  when(io.reset) {
+    a := 0; b := 0; c := 0; d := 0; e := 0; f := 0; g := 0; h := 0
+    round := 0
+    busyReg := False
+    readyReg := False
+    tail0Reg := 0
+    tail1Reg := 0
+    tail2Reg := 0
+    w16Reg := 0
+    w17Reg := 0
+  } otherwise {
+    when(io.start) {
+      a := io.midstate(255 downto 224).asUInt
+      b := io.midstate(223 downto 192).asUInt
+      c := io.midstate(191 downto 160).asUInt
+      d := io.midstate(159 downto 128).asUInt
+      e := io.midstate(127 downto 96).asUInt
+      f := io.midstate(95 downto 64).asUInt
+      g := io.midstate(63 downto 32).asUInt
+      h := io.midstate(31 downto 0).asUInt
+      round := 0
+      busyReg := True
+      readyReg := False
+      tail0Reg := tail0
+      tail1Reg := tail1
+      tail2Reg := tail2
+      w16Reg := w16
+      w17Reg := w17
+    } elsewhen(busyReg) {
+      h := g
+      g := f
+      f := e
+      e := eNext
+      d := c
+      c := b
+      b := a
+      a := aNext
+
+      when(round === U(2, 2 bits)) {
+        busyReg := False
+        readyReg := True
+      } otherwise {
+        round := round + 1
+      }
+    }
+  }
+
+  io.ready := readyReg
+  io.prefixState := Sha256.concatWords(Seq(a, b, c, d, e, f, g, h))
+  io.tail2 := tail2Reg
+  io.w16 := w16Reg
+  io.w17 := w17Reg
+}
+
+class Sha256BitcoinFirstPassPrepared(
+  registerOutputs: Boolean = false,
+  twoCycleRound: Boolean = false,
+  threeCycleRound: Boolean = false,
+  registerRoundConstant: Boolean = false,
+  minimizeShaReset: Boolean = false,
+  csaRound: Boolean = false
 ) extends Component {
   val io = new Bundle {
     val reset = in Bool()
     val start = in Bool()
     val kWord = in UInt(32 bits)
     val midstate = in Bits(256 bits)
-    val tail = in Bits(96 bits)
+    val prefixState = in Bits(256 bits)
+    val tail2 = in UInt(32 bits)
+    val w16 = in UInt(32 bits)
+    val w17 = in UInt(32 bits)
     val nonce = in UInt(32 bits)
     val done = out Bool()
     val round = out UInt(6 bits)
     val digest = out Bits(256 bits)
   }
 
-  val core = new Sha256CompressWords(registerOutputs, twoCycleRound, threeCycleRound, registerRoundConstant, minimizeShaReset)
+  val core = new Sha256CompressWords(
+    registerOutput = registerOutputs,
+    twoCycleRound = twoCycleRound,
+    threeCycleRound = threeCycleRound,
+    registerRoundConstant = registerRoundConstant,
+    minimizeResetFanout = minimizeShaReset,
+    fixedStartRound = 3,
+    fixedStopRound = 63,
+    csaRound = csaRound
+  )
+  val padStart = U(BigInt("80000000", 16), 32 bits)
+  val firstLength = U(BigInt("00000280", 16), 32 bits)
+  val zero = U(0, 32 bits)
+  val w18 = (Sha256.smallSigma1(io.w16) + Sha256.smallSigma0(io.nonce) + io.tail2).resize(32)
   val words = Vec(Seq(
-    io.tail(95 downto 64).asUInt,
-    io.tail(63 downto 32).asUInt,
-    io.tail(31 downto 0).asUInt,
     io.nonce,
-    U(BigInt("80000000", 16), 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(0, 32 bits),
-    U(BigInt("00000280", 16), 32 bits)
+    padStart,
+    zero,
+    zero,
+    zero,
+    zero,
+    zero,
+    zero,
+    zero,
+    zero,
+    zero,
+    zero,
+    firstLength,
+    io.w16,
+    io.w17,
+    w18
   ))
 
   core.io.reset := io.reset
   core.io.start := io.start
+  core.io.startRound := U(3, 6 bits)
+  core.io.stopRound := U(63, 6 bits)
   core.io.kWord := io.kWord
-  core.io.stateIn := io.midstate
+  core.io.stateIn := io.prefixState
   core.io.words := words
 
+  io.done := core.io.done
   io.round := core.io.roundOut
-  val digest = Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
-  if (registerOutputs) {
-    val doneReg = Reg(Bool()) init False
-    val digestReg = Reg(Bits(256 bits)) init 0
-
-    io.done := doneReg
-    io.digest := digestReg
-
-    when(io.reset) {
-      doneReg := False
-      digestReg := 0
-    } otherwise {
-      doneReg := core.io.done
-      when(core.io.done) {
-        digestReg := digest
-      }
-    }
-  } else {
-    io.done := core.io.done
-    io.digest := digest
-  }
+  io.digest := Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
 }
 
 class Sha256BitcoinSecondPass(
@@ -685,7 +1029,9 @@ class Sha256BitcoinSecondPass(
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
-  minimizeShaReset: Boolean = false
+  minimizeShaReset: Boolean = false,
+  roundSkip: Boolean = false,
+  csaRound: Boolean = false
 ) extends Component {
   val io = new Bundle {
     val reset = in Bool()
@@ -694,10 +1040,18 @@ class Sha256BitcoinSecondPass(
     val firstDigest = in Bits(256 bits)
     val done = out Bool()
     val round = out UInt(6 bits)
-    val digestLow32 = out Bits(32 bits)
+    val workLow32 = out UInt(32 bits)
   }
 
-  val core = new Sha256CompressWords(registerOutputs, twoCycleRound, threeCycleRound, registerRoundConstant, minimizeShaReset)
+  val core = new Sha256CompressWords(
+    registerOutput = registerOutputs,
+    twoCycleRound = twoCycleRound,
+    threeCycleRound = threeCycleRound,
+    registerRoundConstant = registerRoundConstant,
+    minimizeResetFanout = minimizeShaReset,
+    fixedStopRound = if (roundSkip) 60 else 63,
+    csaRound = csaRound
+  )
   val shaIv = Sha256Pass.ivBits
   val words = Vec(Seq(
     Sha256.wordFromDigest(io.firstDigest, 0),
@@ -720,31 +1074,98 @@ class Sha256BitcoinSecondPass(
 
   core.io.reset := io.reset
   core.io.start := io.start
+  core.io.startRound := U(0, 6 bits)
+  core.io.stopRound := U(if (roundSkip) 60 else 63, 6 bits)
   core.io.kWord := io.kWord
   core.io.stateIn := shaIv
   core.io.words := words
 
   io.round := core.io.roundOut
-  val digestLow32 = (Sha256.word(Sha256.Iv(7)) + Sha256.wordFromDigest(core.io.workOut, 7)).resize(32).asBits
+  val workLow32 = Sha256.wordFromDigest(core.io.workOut, if (roundSkip) 4 else 7)
   if (registerOutputs) {
     val doneReg = Reg(Bool()) init False
-    val digestLow32Reg = Reg(Bits(32 bits)) init 0
+    val workLow32Reg = Reg(UInt(32 bits)) init 0
 
     io.done := doneReg
-    io.digestLow32 := digestLow32Reg
+    io.workLow32 := workLow32Reg
 
     when(io.reset) {
       doneReg := False
-      digestLow32Reg := 0
+      workLow32Reg := 0
     } otherwise {
       doneReg := core.io.done
       when(core.io.done) {
-        digestLow32Reg := digestLow32
+        workLow32Reg := workLow32
       }
     }
   } else {
     io.done := core.io.done
-    io.digestLow32 := digestLow32
+    io.workLow32 := workLow32
+  }
+}
+
+object BitcoinCandidateFilter {
+  private val Iv7 = Sha256.Iv(7)
+
+  private def lowMask(width: Int): BigInt =
+    (BigInt(1) << width) - 1
+
+  private def addIv7Low(workLow32: UInt, width: Int): Bits = {
+    require(width > 0 && width <= 32, s"width must be 1..32, got $width")
+    (workLow32.asBits(width - 1 downto 0).asUInt + U(Iv7 & lowMask(width), width bits)).resize(width).asBits
+  }
+
+  private def quick3MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 5) === B(0, 3 bits)
+
+  private def quick14MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 0) === B(0, 8 bits) &&
+      digestLowBits(15 downto 10) === B(0, 6 bits)
+
+  private def quick21MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 0) === B(0, 8 bits) &&
+      digestLowBits(15 downto 8) === B(0, 8 bits) &&
+      digestLowBits(23 downto 19) === B(0, 5 bits)
+
+  private def quick23MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 0) === B(0, 8 bits) &&
+      digestLowBits(15 downto 8) === B(0, 8 bits) &&
+      digestLowBits(23 downto 17) === B(0, 7 bits)
+
+  private def quick26MeetsTarget(digestLowBits: Bits): Bool =
+    digestLowBits(7 downto 0) === B(0, 8 bits) &&
+      digestLowBits(15 downto 8) === B(0, 8 bits) &&
+      digestLowBits(23 downto 16) === B(0, 8 bits) &&
+      digestLowBits(31 downto 30) === B(0, 2 bits)
+
+  def meets(options: TangMinerHardwareOptions, mode: UInt, workLow32: UInt): Bool = {
+    val candidateAlwaysSelected = mode === U(0, 3 bits)
+    val quick3TargetSelected = mode === U(1, 3 bits)
+    val quick21TargetSelected = mode === U(2, 3 bits)
+    val quick23TargetSelected = mode === U(3, 3 bits)
+    val quick26TargetSelected = mode === U(4, 3 bits)
+    val quick14TargetSelected = mode === U(5, 3 bits)
+
+    def fixedCandidateMeetsTarget(mode: Int): Bool = mode match {
+      case 0 => True
+      case 1 => quick3MeetsTarget(addIv7Low(workLow32, 8))
+      case 2 => quick21MeetsTarget(addIv7Low(workLow32, 24))
+      case 3 => quick23MeetsTarget(addIv7Low(workLow32, 24))
+      case 4 => quick26MeetsTarget(addIv7Low(workLow32, 32))
+      case 5 => quick14MeetsTarget(addIv7Low(workLow32, 16))
+    }
+
+    options.fixedCandidateMode match {
+      case Some(fixedMode) => fixedCandidateMeetsTarget(fixedMode)
+      case None =>
+        val digestLow32 = addIv7Low(workLow32, 32)
+        candidateAlwaysSelected ||
+          (quick3TargetSelected && quick3MeetsTarget(digestLow32)) ||
+          (quick14TargetSelected && quick14MeetsTarget(digestLow32)) ||
+          (quick21TargetSelected && quick21MeetsTarget(digestLow32)) ||
+          (quick23TargetSelected && quick23MeetsTarget(digestLow32)) ||
+          (quick26TargetSelected && quick26MeetsTarget(digestLow32))
+    }
   }
 }
 
@@ -756,12 +1177,20 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
     val midstate = in Bits(256 bits)
     val tail = in Bits(96 bits)
     val candidateMode = in UInt(3 bits)
+    val roundSkipPrefixState = in Bits(256 bits)
+    val roundSkipTail2 = in UInt(32 bits)
+    val roundSkipW16 = in UInt(32 bits)
+    val roundSkipW17 = in UInt(32 bits)
+    val externalFirstKWord = in UInt(32 bits)
+    val externalSecondKWord = in UInt(32 bits)
     val startNonce = in UInt(32 bits)
     val nonceStride = in UInt(32 bits)
     val running = out Bool()
     val found = out Bool()
     val foundNonce = out UInt(32 bits)
     val currentNonce = out UInt(32 bits)
+    val firstRound = out UInt(6 bits)
+    val secondRound = out UInt(6 bits)
   }
 
   object State extends SpinalEnum {
@@ -769,6 +1198,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   }
 
   val state = Reg(State()) init State.idle
+  val shaFirstPrepare = Bool()
   val shaFirstStart = Bool()
   val shaSecondStart = Bool()
   val jobMidstateReg = Reg(Bits(256 bits)) init 0
@@ -777,93 +1207,101 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   val firstNonceReg = Reg(UInt(32 bits)) init 0
   val secondNonceReg = Reg(UInt(32 bits)) init 0
   val checkValidReg = Reg(Bool()) init False
-  val checkDigestLow32Reg = Reg(Bits(32 bits)) init 0
+  val checkWorkLow32Reg = Reg(UInt(32 bits)) init 0
   val checkNonceReg = Reg(UInt(32 bits)) init 0
   val checkCandidateModeReg = Reg(UInt(3 bits)) init 3
   val foundNonceReg = Reg(UInt(32 bits)) init 0
   val currentNonceReg = Reg(UInt(32 bits)) init 0
 
+  shaFirstPrepare := False
   shaFirstStart := False
   shaSecondStart := False
 
   val flushPipeline = io.stop || (io.start && state =/= State.idle)
 
-  val shaFirst = new Sha256BitcoinFirstPass(
-    options.registerPassOutputs,
-    options.twoCycleRound,
-    options.threeCycleRound,
-    options.registerRoundConstant,
-    options.minimizeShaReset
-  )
-  shaFirst.io.reset := io.reset || flushPipeline
-  shaFirst.io.start := shaFirstStart
-  shaFirst.io.midstate := jobMidstateReg
-  shaFirst.io.tail := jobTailReg
-  shaFirst.io.nonce := currentNonceReg
+  val shaFirstKWord = UInt(32 bits)
+  val shaFirstReady = Bool()
+  val shaFirstDone = Bool()
+  val shaFirstRound = UInt(6 bits)
+  val shaFirstDigest = Bits(256 bits)
+
+  if (options.roundSkip) {
+    val shaFirst = new Sha256BitcoinFirstPassPrepared(
+      options.registerPassOutputs,
+      options.twoCycleRound,
+      options.threeCycleRound,
+      options.registerRoundConstant,
+      options.minimizeShaReset,
+      options.csaRound
+    )
+    shaFirst.io.reset := io.reset || flushPipeline
+    shaFirst.io.start := shaFirstStart
+    shaFirst.io.kWord := shaFirstKWord
+    shaFirst.io.midstate := jobMidstateReg
+    shaFirst.io.prefixState := io.roundSkipPrefixState
+    shaFirst.io.tail2 := io.roundSkipTail2
+    shaFirst.io.w16 := io.roundSkipW16
+    shaFirst.io.w17 := io.roundSkipW17
+    shaFirst.io.nonce := currentNonceReg
+
+    shaFirstReady := True
+    shaFirstDone := shaFirst.io.done
+    shaFirstRound := shaFirst.io.round
+    shaFirstDigest := shaFirst.io.digest
+  } else {
+    val shaFirst = new Sha256BitcoinFirstPass(
+      options.registerPassOutputs,
+      options.twoCycleRound,
+      options.threeCycleRound,
+      options.registerRoundConstant,
+      options.minimizeShaReset,
+      roundSkip = false,
+      csaRound = options.csaRound
+    )
+    shaFirst.io.reset := io.reset || flushPipeline
+    shaFirst.io.prepare := shaFirstPrepare
+    shaFirst.io.start := shaFirstStart
+    shaFirst.io.kWord := shaFirstKWord
+    shaFirst.io.midstate := jobMidstateReg
+    shaFirst.io.tail := jobTailReg
+    shaFirst.io.nonce := currentNonceReg
+
+    shaFirstReady := shaFirst.io.ready
+    shaFirstDone := shaFirst.io.done
+    shaFirstRound := shaFirst.io.round
+    shaFirstDigest := shaFirst.io.digest
+  }
 
   val shaSecond = new Sha256BitcoinSecondPass(
     options.registerPassOutputs,
     options.twoCycleRound,
     options.threeCycleRound,
     options.registerRoundConstant,
-    options.minimizeShaReset
+    options.minimizeShaReset,
+    options.roundSkip,
+    options.csaRound
   )
   shaSecond.io.reset := io.reset || flushPipeline
   shaSecond.io.start := shaSecondStart
-  shaSecond.io.firstDigest := shaFirst.io.digest
+  shaSecond.io.firstDigest := shaFirstDigest
+  io.firstRound := shaFirstRound
+  io.secondRound := shaSecond.io.round
 
   if (options.registerRoundConstant) {
-    shaFirst.io.kWord := 0
+    shaFirstKWord := 0
     shaSecond.io.kWord := 0
+  } else if (options.externalRoundConstants) {
+    shaFirstKWord := io.externalFirstKWord
+    shaSecond.io.kWord := io.externalSecondKWord
   } else {
     val kVec = Vec(Sha256.K.map(Sha256.word))
-    val firstKWord = kVec(shaFirst.io.round)
-    val secondKWord = if (options.sharedRoundConstant) firstKWord else kVec(shaSecond.io.round)
-    shaFirst.io.kWord := firstKWord
+    val firstKWord = kVec(shaFirstRound)
+    val secondKWord = if (options.sharedRoundConstant && !options.roundSkip) firstKWord else kVec(shaSecond.io.round)
+    shaFirstKWord := firstKWord
     shaSecond.io.kWord := secondKWord
   }
 
-  val candidateAlwaysSelected = checkCandidateModeReg === U(0, 3 bits)
-  val quick3TargetSelected = checkCandidateModeReg === U(1, 3 bits)
-  val quick21TargetSelected = checkCandidateModeReg === U(2, 3 bits)
-  val quick23TargetSelected = checkCandidateModeReg === U(3, 3 bits)
-  val quick26TargetSelected = checkCandidateModeReg === U(4, 3 bits)
-  val quick14TargetSelected = checkCandidateModeReg === U(5, 3 bits)
-  val quick3MeetsTarget = checkDigestLow32Reg(7 downto 5) === B(0, 3 bits)
-  val quick14MeetsTarget =
-    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
-      checkDigestLow32Reg(15 downto 10) === B(0, 6 bits)
-  val quick21MeetsTarget =
-    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
-      checkDigestLow32Reg(15 downto 8) === B(0, 8 bits) &&
-      checkDigestLow32Reg(23 downto 19) === B(0, 5 bits)
-  val quick23MeetsTarget =
-    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
-      checkDigestLow32Reg(15 downto 8) === B(0, 8 bits) &&
-      checkDigestLow32Reg(23 downto 17) === B(0, 7 bits)
-  val quick26MeetsTarget =
-    checkDigestLow32Reg(7 downto 0) === B(0, 8 bits) &&
-      checkDigestLow32Reg(15 downto 8) === B(0, 8 bits) &&
-      checkDigestLow32Reg(23 downto 16) === B(0, 8 bits) &&
-      checkDigestLow32Reg(31 downto 30) === B(0, 2 bits)
-  def fixedCandidateMeetsTarget(mode: Int): Bool = mode match {
-    case 0 => True
-    case 1 => quick3MeetsTarget
-    case 2 => quick21MeetsTarget
-    case 3 => quick23MeetsTarget
-    case 4 => quick26MeetsTarget
-    case 5 => quick14MeetsTarget
-  }
-  val checkDigestMeetsTarget = options.fixedCandidateMode match {
-    case Some(mode) => fixedCandidateMeetsTarget(mode)
-    case None =>
-      candidateAlwaysSelected ||
-        (quick3TargetSelected && quick3MeetsTarget) ||
-        (quick14TargetSelected && quick14MeetsTarget) ||
-        (quick21TargetSelected && quick21MeetsTarget) ||
-        (quick23TargetSelected && quick23MeetsTarget) ||
-        (quick26TargetSelected && quick26MeetsTarget)
-  }
+  val checkDigestMeetsTarget = BitcoinCandidateFilter.meets(options, checkCandidateModeReg, checkWorkLow32Reg)
 
   io.running := state =/= State.idle && state =/= State.report
   io.found := state === State.report
@@ -878,7 +1316,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
     firstNonceReg := 0
     secondNonceReg := 0
     checkValidReg := False
-    checkDigestLow32Reg := 0
+    checkWorkLow32Reg := 0
     checkNonceReg := 0
     checkCandidateModeReg := 3
     foundNonceReg := 0
@@ -902,17 +1340,21 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
         is(State.idle) {
         }
         is(State.firstStart) {
-          shaFirstStart := True
-          firstNonceReg := currentNonceReg
-          currentNonceReg := currentNonceReg + io.nonceStride
-          state := State.run
+          when(shaFirstReady) {
+            shaFirstStart := True
+            firstNonceReg := currentNonceReg
+            currentNonceReg := currentNonceReg + io.nonceStride
+            state := State.run
+          } otherwise {
+            shaFirstPrepare := True
+          }
         }
         is(State.run) {
           when(checkValidReg && checkDigestMeetsTarget) {
             foundNonceReg := checkNonceReg
             state := State.report
           } otherwise {
-            when(shaFirst.io.done) {
+            when(shaFirstDone) {
               shaSecondStart := True
               secondNonceReg := firstNonceReg
 
@@ -923,7 +1365,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
 
             when(shaSecond.io.done) {
               checkValidReg := True
-              checkDigestLow32Reg := shaSecond.io.digestLow32
+              checkWorkLow32Reg := shaSecond.io.workLow32
               checkNonceReg := secondNonceReg
               checkCandidateModeReg := jobCandidateModeReg
             }
@@ -960,7 +1402,47 @@ class BitcoinHashWideLaneBlock(
   val jobCandidateModeReg = Reg(UInt(3 bits)) init 3
   val startCoresReg = Reg(Bool()) init False
 
-  val cores = (0 until laneCount).map(_ => new BitcoinHashCore(options.copy(wideLaneBlock = false)))
+  val coreOptions = options.copy(
+    wideLaneBlock = false,
+    externalRoundConstants = options.roundSkip && !options.registerRoundConstant
+  )
+  val cores = (0 until laneCount).map(_ => new BitcoinHashCore(coreOptions))
+  val startCores = Bool()
+  val stopCores = Bool()
+  val roundSkipPrefixState = Bits(256 bits)
+  val roundSkipTail2 = UInt(32 bits)
+  val roundSkipW16 = UInt(32 bits)
+  val roundSkipW17 = UInt(32 bits)
+
+  if (options.roundSkip) {
+    val prefix = new Sha256BitcoinFirstPassPrefix(
+      options.registerPassOutputs,
+      options.twoCycleRound,
+      options.threeCycleRound,
+      options.registerRoundConstant,
+      options.minimizeShaReset,
+      options.csaRound
+    )
+    prefix.io.reset := io.reset || io.stop
+    prefix.io.start := io.start
+    prefix.io.midstate := io.midstate
+    prefix.io.tail := io.tail
+
+    val prefixReadyLast = RegNext(prefix.io.ready) init False
+    startCores := prefix.io.ready && !prefixReadyLast
+    stopCores := io.stop || io.start
+    roundSkipPrefixState := prefix.io.prefixState
+    roundSkipTail2 := prefix.io.tail2
+    roundSkipW16 := prefix.io.w16
+    roundSkipW17 := prefix.io.w17
+  } else {
+    startCores := startCoresReg
+    stopCores := io.stop
+    roundSkipPrefixState := 0
+    roundSkipTail2 := 0
+    roundSkipW16 := 0
+    roundSkipW17 := 0
+  }
 
   when(io.reset) {
     jobMidstateReg := 0
@@ -979,13 +1461,32 @@ class BitcoinHashWideLaneBlock(
 
   for ((core, lane) <- cores.zipWithIndex) {
     core.io.reset := io.reset
-    core.io.start := startCoresReg
-    core.io.stop := io.stop
+    core.io.start := startCores
+    core.io.stop := stopCores
     core.io.midstate := jobMidstateReg
     core.io.tail := jobTailReg
     core.io.candidateMode := jobCandidateModeReg
+    core.io.roundSkipPrefixState := roundSkipPrefixState
+    core.io.roundSkipTail2 := roundSkipTail2
+    core.io.roundSkipW16 := roundSkipW16
+    core.io.roundSkipW17 := roundSkipW17
     core.io.startNonce := U(lane, 32 bits)
     core.io.nonceStride := U(laneCount, 32 bits)
+  }
+
+  if (coreOptions.externalRoundConstants) {
+    val kVec = Vec(Sha256.K.map(Sha256.word))
+    val firstKWord = kVec(cores(0).io.firstRound)
+    val secondKWord = kVec(cores(0).io.secondRound)
+    cores.foreach { core =>
+      core.io.externalFirstKWord := firstKWord
+      core.io.externalSecondKWord := secondKWord
+    }
+  } else {
+    cores.foreach { core =>
+      core.io.externalFirstKWord := 0
+      core.io.externalSecondKWord := 0
+    }
   }
 
   io.runningAny := cores.map(_.io.running).reduce(_ || _)
@@ -1034,13 +1535,77 @@ class MiningLanes(
     io.currentNonce := lanes.io.currentNonce
     io.foundNonce := lanes.io.foundNonce
   } else {
-    val cores = (0 until laneCount).map(_ => new BitcoinHashCore(options))
+    val coreOptions = options.copy(
+      externalRoundConstants = options.roundSkip && laneStartStagger == 0 && !options.registerRoundConstant
+    )
+    val cores = (0 until laneCount).map(_ => new BitcoinHashCore(coreOptions))
     cores.foreach(_.io.reset := io.reset)
     val coreStartByLane = Vec(Bool(), laneCount)
+    val miningStart = Bool()
+    val coreStop = Bool()
+    val coreMidstate = Bits(256 bits)
+    val coreTail = Bits(96 bits)
+    val coreCandidateMode = UInt(3 bits)
+    val roundSkipPrefixState = Bits(256 bits)
+    val roundSkipTail2 = UInt(32 bits)
+    val roundSkipW16 = UInt(32 bits)
+    val roundSkipW17 = UInt(32 bits)
+
+    if (options.roundSkip) {
+      val jobMidstateReg = Reg(Bits(256 bits)) init 0
+      val jobTailReg = Reg(Bits(96 bits)) init 0
+      val jobCandidateModeReg = Reg(UInt(3 bits)) init 3
+      val prefix = new Sha256BitcoinFirstPassPrefix(
+        options.registerPassOutputs,
+        options.twoCycleRound,
+        options.threeCycleRound,
+        options.registerRoundConstant,
+        options.minimizeShaReset,
+        options.csaRound
+      )
+
+      prefix.io.reset := io.reset || io.stop
+      prefix.io.start := io.start
+      prefix.io.midstate := io.midstate
+      prefix.io.tail := io.tail
+
+      val prefixReadyLast = RegNext(prefix.io.ready) init False
+      miningStart := prefix.io.ready && !prefixReadyLast
+      coreStop := io.stop || io.start
+      coreMidstate := jobMidstateReg
+      coreTail := jobTailReg
+      coreCandidateMode := jobCandidateModeReg
+      roundSkipPrefixState := prefix.io.prefixState
+      roundSkipTail2 := prefix.io.tail2
+      roundSkipW16 := prefix.io.w16
+      roundSkipW17 := prefix.io.w17
+
+      when(io.reset) {
+        jobMidstateReg := 0
+        jobTailReg := 0
+        jobCandidateModeReg := 3
+      } otherwise {
+        when(io.start) {
+          jobMidstateReg := io.midstate
+          jobTailReg := io.tail
+          jobCandidateModeReg := io.candidateMode
+        }
+      }
+    } else {
+      miningStart := io.start
+      coreStop := io.stop
+      coreMidstate := io.midstate
+      coreTail := io.tail
+      coreCandidateMode := io.candidateMode
+      roundSkipPrefixState := 0
+      roundSkipTail2 := 0
+      roundSkipW16 := 0
+      roundSkipW17 := 0
+    }
 
     if (laneStartStagger == 0) {
       for (lane <- 0 until laneCount) {
-        coreStartByLane(lane) := io.start
+        coreStartByLane(lane) := miningStart
       }
     } else {
       val maxStartDelay = (laneCount - 1) * laneStartStagger
@@ -1052,13 +1617,13 @@ class MiningLanes(
         coreStartByLane(lane) := False
       }
 
-      when(io.reset || io.stop) {
+      when(io.reset || coreStop) {
         laneStartPending := 0
         for (lane <- 0 until laneCount) {
           laneStartDelay(lane) := 0
         }
       } otherwise {
-        when(io.start) {
+        when(miningStart) {
           laneStartPending := B((BigInt(1) << laneCount) - 1, laneCount bits)
           for (lane <- 0 until laneCount) {
             laneStartDelay(lane) := U(lane * laneStartStagger, delayBits bits)
@@ -1080,12 +1645,31 @@ class MiningLanes(
 
     for ((core, lane) <- cores.zipWithIndex) {
       core.io.start := coreStartByLane(lane)
-      core.io.stop := io.stop
-      core.io.midstate := io.midstate
-      core.io.tail := io.tail
-      core.io.candidateMode := io.candidateMode
+      core.io.stop := coreStop
+      core.io.midstate := coreMidstate
+      core.io.tail := coreTail
+      core.io.candidateMode := coreCandidateMode
+      core.io.roundSkipPrefixState := roundSkipPrefixState
+      core.io.roundSkipTail2 := roundSkipTail2
+      core.io.roundSkipW16 := roundSkipW16
+      core.io.roundSkipW17 := roundSkipW17
       core.io.startNonce := U(lane, 32 bits)
       core.io.nonceStride := U(laneCount, 32 bits)
+    }
+
+    if (coreOptions.externalRoundConstants) {
+      val kVec = Vec(Sha256.K.map(Sha256.word))
+      val firstKWord = kVec(cores(0).io.firstRound)
+      val secondKWord = kVec(cores(0).io.secondRound)
+      cores.foreach { core =>
+        core.io.externalFirstKWord := firstKWord
+        core.io.externalSecondKWord := secondKWord
+      }
+    } else {
+      cores.foreach { core =>
+        core.io.externalFirstKWord := 0
+        core.io.externalSecondKWord := 0
+      }
     }
 
     io.runningAny := cores.map(_.io.running).reduce(_ || _)
@@ -1625,13 +2209,17 @@ object GenerateVerilog extends App {
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
     twoCycleRound = envBoolean("TANGMINER_TWO_CYCLE_ROUND", default = false) ||
       envBoolean("SPINAL_TWO_CYCLE_ROUND", default = false),
-	    threeCycleRound = envBoolean("TANGMINER_THREE_CYCLE_ROUND", default = false) ||
-	      envBoolean("SPINAL_THREE_CYCLE_ROUND", default = false),
-	    registerRoundConstant = envBoolean("TANGMINER_REGISTER_ROUND_CONSTANT", default = false) ||
-	      envBoolean("SPINAL_REGISTER_ROUND_CONSTANT", default = false),
-	    minimizeShaReset = envBoolean("TANGMINER_MINIMIZE_SHA_RESET", default = false) ||
-	      envBoolean("SPINAL_MINIMIZE_SHA_RESET", default = false)
-	  )
+    threeCycleRound = envBoolean("TANGMINER_THREE_CYCLE_ROUND", default = false) ||
+      envBoolean("SPINAL_THREE_CYCLE_ROUND", default = false),
+    registerRoundConstant = envBoolean("TANGMINER_REGISTER_ROUND_CONSTANT", default = false) ||
+      envBoolean("SPINAL_REGISTER_ROUND_CONSTANT", default = false),
+    minimizeShaReset = envBoolean("TANGMINER_MINIMIZE_SHA_RESET", default = false) ||
+      envBoolean("SPINAL_MINIMIZE_SHA_RESET", default = false),
+    roundSkip = envBoolean("TANGMINER_ROUND_SKIP", default = false) ||
+      envBoolean("SPINAL_ROUND_SKIP", default = false),
+    csaRound = envBoolean("TANGMINER_CSA_ROUND", default = false) ||
+      envBoolean("SPINAL_CSA_ROUND", default = false)
+  )
 
   SpinalConfig(
     targetDirectory = targetDirectory,
@@ -1670,13 +2258,17 @@ object GenerateSimVerilog extends App {
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
     twoCycleRound = envBoolean("TANGMINER_TWO_CYCLE_ROUND", default = false) ||
       envBoolean("SPINAL_TWO_CYCLE_ROUND", default = false),
-	    threeCycleRound = envBoolean("TANGMINER_THREE_CYCLE_ROUND", default = false) ||
-	      envBoolean("SPINAL_THREE_CYCLE_ROUND", default = false),
-	    registerRoundConstant = envBoolean("TANGMINER_REGISTER_ROUND_CONSTANT", default = false) ||
-	      envBoolean("SPINAL_REGISTER_ROUND_CONSTANT", default = false),
-	    minimizeShaReset = envBoolean("TANGMINER_MINIMIZE_SHA_RESET", default = false) ||
-	      envBoolean("SPINAL_MINIMIZE_SHA_RESET", default = false)
-	  )
+    threeCycleRound = envBoolean("TANGMINER_THREE_CYCLE_ROUND", default = false) ||
+      envBoolean("SPINAL_THREE_CYCLE_ROUND", default = false),
+    registerRoundConstant = envBoolean("TANGMINER_REGISTER_ROUND_CONSTANT", default = false) ||
+      envBoolean("SPINAL_REGISTER_ROUND_CONSTANT", default = false),
+    minimizeShaReset = envBoolean("TANGMINER_MINIMIZE_SHA_RESET", default = false) ||
+      envBoolean("SPINAL_MINIMIZE_SHA_RESET", default = false),
+    roundSkip = envBoolean("TANGMINER_ROUND_SKIP", default = false) ||
+      envBoolean("SPINAL_ROUND_SKIP", default = false),
+    csaRound = envBoolean("TANGMINER_CSA_ROUND", default = false) ||
+      envBoolean("SPINAL_CSA_ROUND", default = false)
+  )
 
   SpinalConfig(
     targetDirectory = "build/spinal-sim",

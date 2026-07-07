@@ -8,13 +8,49 @@ the current defaults. The active branch graph is:
 
 - `main` / `origin/main`: selected hardware-validated 5-lane 20K design at
   `54.000 MHz`, built with `synth_gowin -nowidelut` and `NEXTPNR_SEED=13`.
-- `width-exp` / `origin/width-exp`: experimental 61-cycle round skipping and
-  wider local A/B compressor-pair lanes.
+- `main` also has unvalidated `SPINAL_ROUND_SKIP=1` and `SPINAL_CSA_ROUND=1`
+  experimental knobs. They are not selected defaults.
+- `width-exp` / `origin/width-exp`: historical 61-cycle round skipping and
+  wider local A/B compressor-pair lane experiments.
 - `origin/sram-optimize`: experimental SHA message schedule storage using
   distributed LUT RAM.
 
 No `AGENTS.md` or `agents.md` file exists inside this repository at the time of
 this snapshot.
+
+## 2026-07-07 Active Experimental Knobs
+
+Round-skip has been integrated into the active SpinalHDL design behind
+`SPINAL_ROUND_SKIP=1`. It prepares first-pass rounds 0..2 once per job, starts
+nonce-dependent first-pass work at round 3, stops the second pass at round 60,
+and derives the candidate low word from that round-60 working state. The modeled
+5-lane 54 MHz rate is `5 * 54 / 61 = 4.426 MH/s`, but this is not a validated
+hashrate until strict hardware nonce validation passes.
+
+Latest local open-source 5-lane 54 MHz seed-13 reruns with `synth_gowin
+-nowidelut` did not produce a new flashable round-skip image. The default
+full-64 build packed at 72% LUT4 / 61% DFF / 20% ALU but failed legal
+placement in `build/attempt-logs/roundskip-baseline-build.log`; the round-skip
+candidate packed at 76% LUT4 / 65% DFF / 22% ALU and also failed legal
+placement in `build/attempt-logs/roundskip-candidate-build.log`. Keep the
+previously hardware-validated `build/hw-prod5-54m-nowidelut-seed13` image as
+the selected build until a current-source candidate both places and passes
+strict hardware validation.
+
+`SPINAL_CSA_ROUND=1` is also available as a one-cycle datapath experiment. It
+uses carry-save reduction for the SHA round addition trees and is mutually
+exclusive with the existing two-cycle and three-cycle round options. It is for
+57 MHz and higher sweeps after round-skip correctness is established.
+
+Promotion gate for either option:
+
+```sh
+python scripts/tools/serial_smoke.py --target quick21 --count 100 --require-target <uart>
+python scripts/tools/serial_smoke.py --target quick14 --count 20 --require-target <uart>
+python scripts/tools/serial_smoke.py --target quick23 --count 20 --require-target <uart>
+```
+
+Any false positive invalidates the candidate regardless of static timing.
 
 ## 2026-05-26 Hardware Progress
 
@@ -157,6 +193,8 @@ SPINAL_CLOCK_PROFILE=54m
 SPINAL_ENABLE_ECHO=0
 SPINAL_ENABLE_HARDCODED=0
 SPINAL_FIXED_CANDIDATE=2
+SPINAL_ROUND_SKIP=0
+SPINAL_CSA_ROUND=0
 YOSYS_SYNTH_ARGS=-nowidelut
 NEXTPNR_SEED=13
 ```
@@ -350,7 +388,8 @@ Observed impact:
 | Global `synth_gowin -noflatten` | Tried, not usable directly | Preserves hierarchy but produces JSON that nextpnr rejects during I/O packing in this flow. |
 | Selective/staged hierarchy preservation | Tried, not helpful | A custom top-only IO-pad flow reaches nextpnr, but area rises to 79% LUT4/70% DFF and placement fails. |
 | SRAM/distributed schedule taps | Useful for DFF pressure, costly for LUTs | 4x111 passes at 122.13 MHz and cuts DFF to 42%, but LUT4 rises to 87%. |
-| 61-cycle round skip | Tried, not helpful yet | Theoretical 4.9% cadence gain, but both paired and single-pair implementations lose too much Fmax or fail placement. |
+| 61-cycle round skip | Active but unvalidated | Integrated as `SPINAL_ROUND_SKIP=1`; models `5x54` at 4.426 MH/s, but the latest 5-lane 54 MHz `-nowidelut` seed-13 run failed legal placement at 76% LUT4 / 65% DFF / 22% ALU. It must place and pass strict quick21 plus quick14/23 hardware checks before use. |
+| Carry-save one-cycle round | Active but unvalidated | Integrated as `SPINAL_CSA_ROUND=1`; intended for 57 MHz and higher sweeps after round-skip correctness is established. |
 | Wider local pairs, 1x4 or 2x2 | Tried, not helpful so far | Worse Fmax and lower best passing rate than baseline. |
 | Simple timing fences/synchronizers | Tried, not helpful | Top-level digest staging and registered compressor-output `done` both passed simulation but worsened hardware validity around the then-promising 2x81 point. |
 | `SPINAL_SHARED_K=0` | Tried, not helpful at 90 MHz | Removes shared round-constant fanout, but `2x90` still returned 10/10 invalid candidates. |

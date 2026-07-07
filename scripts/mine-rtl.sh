@@ -11,9 +11,16 @@ scripts/helpers/build_verilator_pty.sh
 
 benchmark_seconds="${RTL_BENCHMARK_SECONDS:-2}"
 lane_count="${SPINAL_LANES:-5}"
+round_skip="${SPINAL_ROUND_SKIP:-0}"
+round_skip="${round_skip,,}"
+if [[ "$round_skip" == "1" || "$round_skip" == "true" || "$round_skip" == "yes" || "$round_skip" == "on" ]]; then
+  lane_period_cycles="${SPINAL_LANE_PERIOD_CYCLES:-61}"
+else
+  lane_period_cycles="${SPINAL_LANE_PERIOD_CYCLES:-64}"
+fi
 
 if [[ -z "${RTL_FPGA_TARGET:-}" || -z "${RTL_SUGGEST_DIFFICULTY:-}" ]]; then
-  benchmark_line="$(build/verilator-pty/Vtop --benchmark-seconds "$benchmark_seconds" --lanes "$lane_count")"
+  benchmark_line="$(build/verilator-pty/Vtop --benchmark-seconds "$benchmark_seconds" --lanes "$lane_count" --lane-period-cycles "$lane_period_cycles")"
   echo "$benchmark_line"
 
   eval "$(
