@@ -40,16 +40,41 @@ SPINAL_CSA_ROUND=0
 The previous open-source `5x54` image remains a hardware-validated fallback,
 but it is no longer the default.
 
-Official Gowin EDA timing results for recent 20K builds:
+Recent 20K results are grouped by validation status below. A build is only
+treated as hardware-valid after strict host nonce validation on a loaded FPGA.
+
+Hardware-validated builds:
+
+| Build | Rate | Evidence |
+| --- | ---: | --- |
+| 6 lanes, `67m5`, local K, pass fence, minimized reset | `6.231 MH/s` | current default; closes at `68.525 MHz` in the 2026-07-08 rerun; 100/100 `quick21` valid with `TNC` counter reads; 20/20 `quick14` spot check valid |
+| 5 lanes, `67m5`, local K, pass fence, minimized reset | `5.192 MH/s` | closes at `67.507 MHz`; 20/20 `quick21` valid |
+| 5 lanes, `54m`, open-source `synth_gowin -nowidelut` fallback | `4.219 MH/s` | historical fallback; 50/50 and 100/100 strict `quick21` valid |
+
+Hardware-rejected builds:
 
 | Build | Result | Hardware |
 | --- | --- | --- |
-| 6 lanes, `67m5`, local K, pass fence, minimized reset | closes at `68.525 MHz` in the 2026-07-08 rerun | 100/100 `quick21` valid with `TNC` counter reads; 20/20 `quick14` spot check valid |
-| 5 lanes, `67m5`, local K, pass fence, minimized reset | closes at `67.507 MHz` | 20/20 `quick21` valid |
+| 6 lanes, `81m`, shared K, CSA-lite, pass fence, minimized reset, `GOWIN_ROUTE_MAXFAN=12` | strict cocotb passes at 65-cycle cadence, modeled `7.48 MH/s`; closes at Fmax `81.015 MHz` with 20299/20736 logic and 10283/10368 CLS | rejected: `quick21` returned 43 false positives in 100 jobs |
+
+RTL-valid or modeled speedups that are not flashable yet:
+
+| Build | Result | Blocking issue |
+| --- | --- | --- |
+| 4 lanes, `67m5`, local K, two-round pipeline, pass fence, minimized reset | strict cocotb passes at 33-cycle cadence, modeled `8.18 MH/s` | synthesis exceeds 20K resources, 31126 logic |
+| 5 lanes, `100m286`, local K, register-only two-phase round pipeline, pass fence, minimized reset | modeled `7.83 MH/s` | synthesis exceeds 20K logic resources, 25412/20736 |
+| 6 lanes, `81m`, local K, register-only two-phase round pipeline, pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.59 MH/s` | synthesis exceeds 20K DFF resources, 33155/15750 |
+| 4 lanes, `126m`, local K, async context-memory two-phase round pipeline, pass fence, minimized reset | strict cocotb passes at 65-cycle cadence, modeled `7.75 MH/s` | synthesis exceeds 20K DFF resources, 21515/15750 |
+| 4 lanes, `126m`, local K, sync context-memory two-phase round pipeline, FIFO depth 4, pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.875 MH/s` | synthesis exceeds 20K DFF resources, 16399/15750 after small register trims |
+| 4 lanes, `126m`, sync context-memory two-phase with first-pass output fence bypass or no pass fence | strict cocotb passes | Gowin shifts failure from DFF to logic overuse, about 23110-23111/20736 logic |
+
+Timing, placement, resource, or RTL failures:
+
+| Build | Result | Hardware |
+| --- | --- | --- |
 | 6 lanes, `67m5`, pass fence only | fails setup timing | not flashed |
 | 6 lanes, `67m5`, local K, pass fence, registered K | fails setup, Fmax `64.099 MHz` | not flashed |
 | 6 lanes, `81m`, local K, pass fence, minimized reset, shared job state | strict cocotb passes at 65-cycle cadence, modeled `7.48 MH/s`; routes but fails setup, Fmax `73.603 MHz` | not flashed |
-| 6 lanes, `81m`, shared K, CSA-lite, pass fence, minimized reset, `GOWIN_ROUTE_MAXFAN=12` | strict cocotb passes at 65-cycle cadence, modeled `7.48 MH/s`; closes at Fmax `81.015 MHz` with 20299/20736 logic and 10283/10368 CLS | rejected: `quick21` returned 43 false positives in 100 jobs |
 | 6 lanes, `84m`, local K, pass fence + first-pass feed-forward fence, minimized reset, shared job state | strict cocotb passes at 66-cycle cadence, modeled `7.64 MH/s`; routes but fails setup, Fmax `77.155 MHz`; `GOWIN_ROUTE_MAXFAN=12` is unchanged at Fmax `77.106 MHz` | not flashed |
 | 6 lanes, `84m`, previous row plus balanced round adder | strict cocotb passes, but timing worsens to Fmax `71.450 MHz` | not flashed |
 | 7 lanes, `67m5`, host-round-skip, pass fence, minimized reset | strict cocotb passes at 62-cycle cadence, modeled `7.62 MH/s`; route-option-0 Fmax `57.929 MHz`, unchanged after trimming second-pass output to the candidate low word | not flashed |
@@ -58,15 +83,9 @@ Official Gowin EDA timing results for recent 20K builds:
 | 4 lanes, `120m`, local K, no pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.50 MH/s`; routes but fails setup, Fmax `68.337 MHz` | not flashed |
 | 5 lanes, `67m5`, local K, two rounds/cycle, pass fence, minimized reset | validates in cocotb at 33-cycle cadence but fails placement | not flashed |
 | 4 lanes, `67m5`/`81m`, local K, two rounds/cycle, pass fence, minimized reset | routes but fails setup, Fmax `42.851`/`44.450 MHz` | not flashed |
-| 4 lanes, `67m5`, local K, two-round pipeline, pass fence, minimized reset | strict cocotb passes at 33-cycle cadence, modeled `8.18 MH/s`; synthesis exceeds 20K resources, 31126 logic | not flashed |
 | 3 lanes, `84m`, local K, two-round pipeline, pass fence, minimized reset | synthesis exceeds 20K resources, 23476 logic | not flashed |
 | 2 lanes, `126m`, local K, two-round pipeline, pass fence, minimized reset | routes but fails setup, Fmax `61.831 MHz`; actual at Fmax is `3.75 MH/s` | not flashed |
-| 5 lanes, `100m286`, local K, register-only two-phase round pipeline, pass fence, minimized reset | modeled `7.83 MH/s`; synthesis exceeds 20K logic resources, 25412/20736 | not flashed |
-| 6 lanes, `81m`, local K, register-only two-phase round pipeline, pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.59 MH/s`; synthesis exceeds 20K DFF resources, 33155/15750 | not flashed |
-| 4 lanes, `126m`, local K, async context-memory two-phase round pipeline, pass fence, minimized reset | strict cocotb passes at 65-cycle cadence, modeled `7.75 MH/s`; synthesis exceeds 20K DFF resources, 21515/15750 | not flashed |
-| 4 lanes, `126m`, local K, sync context-memory two-phase round pipeline, FIFO depth 4, pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.875 MH/s`; synthesis still exceeds 20K DFF resources, 16399/15750 after small register trims | not flashed |
 | 4 lanes, `126m`, sync context-memory two-phase with FIFO depth 2 | strict cocotb rejects it: quick14/quick21 time out and the counter sees a 130-cycle gap | not flashed |
-| 4 lanes, `126m`, sync context-memory two-phase with first-pass output fence bypass or no pass fence | strict cocotb passes, but Gowin shifts failure from DFF to logic overuse, about 23110-23111/20736 logic | not flashed |
 
 Static timing closure is not hardware validation. Any new image still needs
 strict host nonce validation before use.
