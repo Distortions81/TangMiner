@@ -107,6 +107,12 @@ Fmax. In host-round-skip mode, 7 lanes at 67.5 MHz validates in RTL at
 63 cycles, normal routing fails with 10546 unrouted nets, and route option 0
 fails setup at 55.354 MHz.
 
+A simpler full-path 4-lane, 120 MHz, no-pass-fence candidate is RTL-correct and
+barely clears the +20% modeled target at `4 * 120 / 64 = 7.50 MH/s`, but it is
+not a timing path forward. The 2026-07-08 official Gowin run with local K and
+minimized reset passed strict cocotb 7/7, then routed at only 68.337 MHz Fmax
+with 3709 setup-violating endpoints. It was not flashed.
+
 The hardware nonce-attempt counter now uses a small registered popcount and a
 split 32/32 accumulator. That keeps `TNC` measurement unambiguous without making
 the counter a SHA timing path in dense host-round-skip builds.

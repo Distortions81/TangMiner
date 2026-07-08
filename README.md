@@ -55,6 +55,7 @@ Official Gowin EDA timing results for recent 20K builds:
 | 7 lanes, `67m5`, host-round-skip, pass fence, minimized reset | strict cocotb passes at 62-cycle cadence, modeled `7.62 MH/s`; route-option-0 Fmax `57.929 MHz`, unchanged after trimming second-pass output to the candidate low word | not flashed |
 | 6 lanes, `81m`, host-round-skip, pass fence, minimized reset | routes but fails setup, Fmax `69.220 MHz`; shared-K CSA-lite with `GOWIN_ROUTE_MAXFAN=12` route-option-0 reaches only Fmax `73.456 MHz` | not flashed |
 | 7 lanes, `67m5`, host-round-skip + first-pass feed-forward fence | strict cocotb passes at 63-cycle cadence, modeled `7.50 MH/s`; route-option-0 Fmax `55.354 MHz` | not flashed |
+| 4 lanes, `120m`, local K, no pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.50 MH/s`; routes but fails setup, Fmax `68.337 MHz` | not flashed |
 | 5 lanes, `67m5`, local K, two rounds/cycle, pass fence, minimized reset | validates in cocotb at 33-cycle cadence but fails placement | not flashed |
 | 4 lanes, `67m5`/`81m`, local K, two rounds/cycle, pass fence, minimized reset | routes but fails setup, Fmax `42.851`/`44.450 MHz` | not flashed |
 | 4 lanes, `67m5`, local K, two-round pipeline, pass fence, minimized reset | strict cocotb passes at 33-cycle cadence, modeled `8.18 MH/s`; synthesis exceeds 20K resources, 31126 logic | not flashed |
