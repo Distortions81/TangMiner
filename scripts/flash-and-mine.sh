@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Build the active SpinalHDL bitstream, program a Tang Nano board, then run the
-# C Stratum host against the board UART.
+# Build the active bitstream, program a Tang Nano board, then run the C Stratum
+# host against the board UART.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
@@ -13,7 +13,7 @@ serial_port_arg=""
 usage() {
   cat <<'EOF'
 usage:
-  scripts/flash-and-mine.sh [--flash|--load] /dev/ttyUSB0
+  scripts/flash-and-mine.sh [--flash|--load] /dev/ttyUSB1
 
 options:
   --flash       write the bitstream to FPGA flash (default)
@@ -22,6 +22,8 @@ options:
 
 environment:
   TARGET=tangnano20k|tangnano9k
+  BITSTREAM_FLOW=gowin|oss (default: gowin for 20K, oss for 9K)
+  DEFAULT_FLOW=gowin|oss (Makefile flow, used when BITSTREAM_FLOW is unset)
   SPINAL_LANES=N
   OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000'
   STRATUM_HOST, STRATUM_PORT, STRATUM_USER, STRATUM_PASS
@@ -81,6 +83,8 @@ if [[ $# -gt 0 ]]; then
 fi
 
 serial_port="${serial_port_arg:-${SERIAL_PORT:-}}"
+target="${TARGET:-tangnano20k}"
+flow="${BITSTREAM_FLOW:-${DEFAULT_FLOW:-}}"
 
 if [[ -z "$serial_port" ]]; then
   echo "missing serial port" >&2
@@ -88,7 +92,39 @@ if [[ -z "$serial_port" ]]; then
   exit 2
 fi
 
-echo "target=${TARGET:-tangnano20k} action=$program_action serial_port=$serial_port"
-make build
-make "$program_action"
-exec scripts/mine-hardware.sh "$serial_port"
+if [[ -z "$flow" ]]; then
+  case "$target" in
+    tangnano20k) flow="gowin" ;;
+    tangnano9k) flow="oss" ;;
+    *)
+      echo "unsupported target: $target" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+fi
+
+case "$flow" in
+  gowin|oss) ;;
+  *)
+    echo "unsupported BITSTREAM_FLOW: $flow" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+echo "target=$target flow=$flow action=$program_action serial_port=$serial_port"
+
+make_args=()
+if [[ -n "${OPENFPGALOADER:-}" ]]; then
+  make_args+=(OPENFPGALOADER="$OPENFPGALOADER")
+fi
+make_args+=(DEFAULT_FLOW="$flow")
+
+if [[ "$flow" = "gowin" ]]; then
+  exec make "${make_args[@]}" "gowin-${program_action}-and-mine" SERIAL_PORT="$serial_port"
+fi
+
+make "${make_args[@]}" oss-build
+make "${make_args[@]}" "oss-$program_action"
+exec make mine-hardware SERIAL_PORT="$serial_port"

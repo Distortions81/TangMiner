@@ -94,21 +94,44 @@ def truthy(value):
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
+def lane_period_cycles(args):
+    round_skip = truthy(make_var_value(args, "SPINAL_ROUND_SKIP", "0"))
+    two_cycle = truthy(make_var_value(args, "SPINAL_TWO_CYCLE_ROUND", "0"))
+    three_cycle = truthy(make_var_value(args, "SPINAL_THREE_CYCLE_ROUND", "0"))
+    pass_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_PASS_OUTPUTS", "0"))
+    compressor_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_COMPRESSOR_OUTPUTS",
+                                               make_var_value(args, "SPINAL_REGISTER_COMPRESS_OUTPUTS", "0")))
+
+    base = 61 if round_skip else 64
+    multiplier = 3 if three_cycle else 2 if two_cycle else 1
+    extra = 1 if pass_outputs else 0
+    if multiplier == 1 and compressor_outputs:
+        extra += 1
+    return base * multiplier + extra
+
+
 def build_variant(args, lanes, profile):
     clock_mhz = PROFILE_CLOCK_MHZ[profile]
     round_skip = truthy(make_var_value(args, "SPINAL_ROUND_SKIP", "0"))
     csa_round = truthy(make_var_value(args, "SPINAL_CSA_ROUND", "0"))
-    lane_period_cycles = 61 if round_skip else 64
+    pass_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_PASS_OUTPUTS", "0"))
+    compressor_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_COMPRESSOR_OUTPUTS",
+                                               make_var_value(args, "SPINAL_REGISTER_COMPRESS_OUTPUTS", "0")))
+    lane_period = lane_period_cycles(args)
     suffix = ""
     if round_skip:
         suffix += "_skip1"
     if csa_round:
         suffix += "_csa1"
+    if pass_outputs:
+        suffix += "_regpass1"
+    if compressor_outputs:
+        suffix += "_regcomp1"
     variant = f"lanes{lanes}_{profile}{suffix}"
     build_dir = REPO_ROOT / args.build_root / variant
     build_dir.mkdir(parents=True, exist_ok=True)
     log_path = build_dir / "build.log"
-    modeled_hps = clock_mhz * 1_000_000.0 * lanes / lane_period_cycles
+    modeled_hps = clock_mhz * 1_000_000.0 * lanes / lane_period
 
     result = SweepResult(
         lanes=lanes,

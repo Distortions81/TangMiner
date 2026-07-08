@@ -1,13 +1,16 @@
 # Optimization Matrix
 
-Snapshot date: 2026-05-26.
+Snapshot date: 2026-07-07.
 
 This note summarizes the optimization branches and local build artifacts that
 exist in this checkout. It keeps historical sweep data because that explains
 the current defaults. The active branch graph is:
 
-- `main` / `origin/main`: selected hardware-validated 5-lane 20K design at
-  `54.000 MHz`, built with `synth_gowin -nowidelut` and `NEXTPNR_SEED=13`.
+- `main` / `origin/main`: selected hardware-validated six-lane 20K design at
+  `67.500 MHz`, built with Official Gowin EDA, `SPINAL_REGISTER_PASS_OUTPUTS=1`,
+  and `SPINAL_MINIMIZE_SHA_RESET=1`.
+- The previous open-source `5x54` `synth_gowin -nowidelut` image remains a
+  hardware-validated fallback, but it is no longer the selected default.
 - `main` also has unvalidated `SPINAL_ROUND_SKIP=1` and `SPINAL_CSA_ROUND=1`
   experimental knobs. They are not selected defaults.
 - `width-exp` / `origin/width-exp`: historical 61-cycle round skipping and
@@ -24,8 +27,10 @@ Round-skip has been integrated into the active SpinalHDL design behind
 `SPINAL_ROUND_SKIP=1`. It prepares first-pass rounds 0..2 once per job, starts
 nonce-dependent first-pass work at round 3, stops the second pass at round 60,
 and derives the candidate low word from that round-60 working state. The modeled
-5-lane 54 MHz rate is `5 * 54 / 61 = 4.426 MH/s`, but this is not a validated
-hashrate until strict hardware nonce validation passes.
+default six-lane 67.5 MHz rate with the pass fence still enabled would be
+`6 * 67.5 / 62 = 6.532 MH/s`, but this is not a validated hashrate until strict
+hardware nonce validation passes. The historical unfenced `5x54` comparison
+models as `5 * 54 / 61 = 4.426 MH/s`.
 
 Latest local open-source 5-lane 54 MHz seed-13 reruns with `synth_gowin
 -nowidelut` did not produce a new flashable round-skip image. The default
@@ -33,14 +38,50 @@ full-64 build packed at 72% LUT4 / 61% DFF / 20% ALU but failed legal
 placement in `build/attempt-logs/roundskip-baseline-build.log`; the round-skip
 candidate packed at 76% LUT4 / 65% DFF / 22% ALU and also failed legal
 placement in `build/attempt-logs/roundskip-candidate-build.log`. Keep the
-previously hardware-validated `build/hw-prod5-54m-nowidelut-seed13` image as
-the selected build until a current-source candidate both places and passes
-strict hardware validation.
+previously hardware-validated `build/hw-prod5-54m-nowidelut-seed13` image only
+as the open-source fallback; the selected build is now the official-Gowin
+six-lane 67.5 MHz pass-fenced/minimized-reset image.
 
 `SPINAL_CSA_ROUND=1` is also available as a one-cycle datapath experiment. It
 uses carry-save reduction for the SHA round addition trees and is mutually
 exclusive with the existing two-cycle and three-cycle round options. It is for
 57 MHz and higher sweeps after round-skip correctness is established.
+
+`SPINAL_REGISTER_PASS_OUTPUTS=1` now means a one-cycle pass-output fence. It
+registers the first-pass digest before the second-pass message load and registers
+the second-pass low word before candidate checking. The older two-cycle
+compressor-plus-pass fence is still reproducible by also setting
+`SPINAL_REGISTER_COMPRESSOR_OUTPUTS=1`.
+
+On 2026-07-07, a six-lane official Gowin build at 67.5 MHz closed and passed
+hardware checks with:
+
+```sh
+make gowin-fmax TARGET=tangnano20k \
+  SPINAL_LANES=6 \
+  SPINAL_CLOCK_PROFILE=67m5 \
+  SPINAL_REGISTER_PASS_OUTPUTS=1 \
+  SPINAL_MINIMIZE_SHA_RESET=1 \
+  GOWIN_PROJECT_NAME=tangminer_gowin_tangnano20k_lanes6_67m5_regpass1_minreset1
+```
+
+This build runs one lane nonce every 65 clocks, modeled as
+`6 * 67.5 / 65 = 6.231 MH/s`. Static timing closed at 67.682 MHz reported Fmax
+against a 67.499 MHz constraint. Resource use dropped versus the unfenced
+six-lane baseline because `SPINAL_MINIMIZE_SHA_RESET=1` let Gowin map state into
+SSRAM: 77% logic, 74% registers, 88% CLS. Hardware validation passed 100/100
+strict quick21 and 20/20 quick14 returned nonces on `/dev/ttyUSB1`, and the
+board was then started mining from the SRAM-loaded image.
+
+Rejected six-lane 67.5 MHz follow-ups from the same pass:
+
+- Pass fence only: improved Fmax from 60.149 MHz to 63.307 MHz, but still failed
+  setup with 128 endpoints and TNS -48.259.
+- Pass fence plus registered round constant: closed timing at 67.505 MHz and
+  reduced logic to 90%, but hardware returned 20/20 invalid quick21 nonces.
+- Pass fence plus `SPINAL_CSA_ROUND=1`: failed Gowin synthesis resource limits
+  with 23995 logic cells requested for a 20736-cell device.
+- Pass fence plus `SPINAL_SHARED_K=0`: failed routing with 1027 unrouted nets.
 
 Promotion gate for either option:
 
@@ -104,11 +145,12 @@ hashes on hardware.
 | 3 lanes, 54 MHz, seed 13 | Pass, 106.86 MHz after fixing the `54m` PLL profile | 50/50 strict quick21 valid | `build/hw-prod3-54m-seed13` |
 | 4 lanes, 54 MHz, seed 13 | Pass, 108.28 MHz; placement reported 61.59 MHz before routing | 50/50 strict quick21 valid | `build/hw-prod4-54m-seed13` |
 | 5 lanes, 54 MHz, seed 13 | Synthesis reached 77% LUT4 / 61% DFF, but placement did not advance beyond the first reported iteration in a practical run and was stopped. Direct seeds 1/2/3/4/6/10, plus seed-4 `--no-tmdriv` and `--placer-heap-beta 1.0`, all failed legal placement. | Not flashed; no bitstream | `build/seed-sweep-prod5-54m` |
-| 5 lanes, 54 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 123.92 MHz; placement reported 72.26 MHz before routing; utilization 72% LUT4 / 61% DFF / 20% ALU | 50/50 and 100/100 strict quick21 valid; board currently loaded with this image | `build/hw-prod5-54m-nowidelut-seed13` |
+| 5 lanes, 54 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 123.92 MHz; placement reported 72.26 MHz before routing; utilization 72% LUT4 / 61% DFF / 20% ALU | 50/50 and 100/100 strict quick21 valid; historical open-source fallback | `build/hw-prod5-54m-nowidelut-seed13` |
 | 5 lanes, 57 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 121.37 MHz; utilization 72% LUT4 / 61% DFF / 20% ALU | 41/50 strict quick21 valid; 9 false positives. Invalidated. | `build/hw-prod5-57m-nowidelut-seed13` |
 | 5 lanes, 58.5 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 119.88 MHz; utilization 72% LUT4 / 61% DFF / 20% ALU | 37/50 strict quick21 valid; 13 false positives. Invalidated. | `build/hw-prod5-58m5-nowidelut-seed13` |
 | 5 lanes, 60.75 MHz, seed 13, `synth_gowin -nowidelut` | Failed legal placement at 72% LUT4 / 61% DFF / 20% ALU; direct seed 4 was stopped after spending several minutes in legalisation with no progress. | Not flashed; no bitstream | `build/attempt-logs/prod5-60m75-nowidelut-seed13.log`, `build/seed-sweep-prod5-60m75-nowidelut/seed4` |
 | 5 lanes, 67.5 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 102.29 MHz; placement reported 67.40 MHz before routing; utilization 72% LUT4 / 61% DFF / 20% ALU | 0/50 strict quick21 valid; 50 false positives. Invalidated. | `build/hw-prod5-67m5-nowidelut-seed13` |
+| 6 lanes, 67.5 MHz, official Gowin, pass-output fence + minimized SHA reset fanout | Pass, 67.682 MHz; utilization 77% logic / 74% register / 88% CLS | 100/100 strict quick21 and 20/20 quick14 valid; current default, SRAM-loaded and mining | `build/gowin/tangminer_gowin_tangnano20k_lanes6_67m5_regpass1_minreset1` |
 | 6 lanes, 54 MHz, seed 13, `synth_gowin -nowidelut` | Failed legal placement at 86% LUT4 / 72% DFF / 24% ALU | Not flashed; no bitstream | `build/attempt-logs/prod6-54m-nowidelut-seed13.log` |
 | 2 lanes, 27 MHz, no PLL, seed 13 | Pass, 121.20 MHz | 5/5 valid | `build/hw-verify-prod2-27m-seed13` |
 
@@ -117,22 +159,24 @@ used `ODIV_SEL=8`, which made a 432 MHz VCO and failed `gowin_pack` on GW2AR-18.
 Changing only `ODIV_SEL` to `16` keeps the output at 54.000 MHz and raises VCO
 to 864 MHz, inside the 500-1250 MHz device range.
 
-The current production-trimmed multi-lane hardware boundary is therefore no
-longer `2x81`; the stricter 50-job check invalidated it. The best validated
-multi-lane point measured in this pass is now `5x54` with `synth_gowin
--nowidelut`, modeled at `5 * 54 / 64 = 4.219 MH/s`. `4x54` also passed and
-models at 3.375 MH/s, `3x54` passed and models at 2.531 MH/s, and `2x67.5`
-passed and models at 2.109 MH/s. More lanes do help when the clock is kept in a
-conservative timing region, but the normal 5-lane 54 MHz seed-13 netlist was
-still placement-limited. Avoiding wide LUT packing reduced packed LUT4 use from
-77% to 72% and made the 5-lane 54 MHz image place, route, and pass hardware
-hash validation. Follow-up 5-lane `-nowidelut` clock steps at 57 MHz, 58.5 MHz,
-and 67.5 MHz all routed with strong static Fmax but returned false positives on
-hardware, while 60.75 MHz did not legally place with the seeds tried. There is
-no clean `CLKOUT` PLL profile between 54 MHz and 57 MHz that keeps the 27 MHz
-PFD at or above the 3.0 MHz device limit. A sixth lane at 54 MHz reached 86%
-LUT4 / 72% DFF and failed legal placement. The previous `5x100.286` and `5x111`
-static candidates must not be treated as hardware-valid.
+The 2026-05-26 production-trimmed open-source hardware boundary was no longer
+`2x81`; the stricter 50-job check invalidated it. The best validated multi-lane
+point measured in that pass was `5x54` with `synth_gowin -nowidelut`, modeled at
+`5 * 54 / 64 = 4.219 MH/s`. `4x54` also passed and models at 3.375 MH/s, `3x54`
+passed and models at 2.531 MH/s, and `2x67.5` passed and models at 2.109 MH/s.
+More lanes do help when the clock is kept in a conservative timing region, but
+the normal 5-lane 54 MHz seed-13 netlist was still placement-limited. Avoiding
+wide LUT packing reduced packed LUT4 use from 77% to 72% and made the 5-lane
+54 MHz image place, route, and pass hardware hash validation. Follow-up 5-lane
+`-nowidelut` clock steps at 57 MHz, 58.5 MHz, and 67.5 MHz all routed with
+strong static Fmax but returned false positives on hardware, while 60.75 MHz did
+not legally place with the seeds tried. There is no clean `CLKOUT` PLL profile
+between 54 MHz and 57 MHz that keeps the 27 MHz PFD at or above the 3.0 MHz
+device limit. A sixth lane at 54 MHz reached 86% LUT4 / 72% DFF and failed legal
+placement. The previous `5x100.286` and `5x111` static candidates must not be
+treated as hardware-valid. As of 2026-07-07, the best validated multi-lane point
+in this checkout is the official-Gowin six-lane 67.5 MHz pass-fenced/minimized
+reset image, modeled at 6.231 MH/s.
 
 The current single-lane structural probe boundary is
 `1x124.875` valid for 50 strict quick21 jobs at the 130-cycle two-cycle cadence,
@@ -173,14 +217,14 @@ host recomputed hashes do not meet the target. The critical path reports continu
 to point into SHA round add/carry datapaths, and single-lane failures above the
 validated boundary rule out cross-lane synchronization as the primary cause. The
 likely flaw is intra-lane SHA datapath margin under real hardware conditions.
-The new 5-lane 54 MHz `-nowidelut` image is the best hardware-validated
-multi-lane point, but it does not change that diagnosis: it succeeds by reducing
-packing and placement pressure at a conservative clock. Pushing the same 5-lane
-shape to 57 MHz already produces false positives, and adding a sixth 54 MHz
-lane does not legally place in the flat layout. Pushing throughput beyond this
-should move toward a carry-save-style round datapath or another split that keeps
-close to the 130-cycle cadence; the 194-cycle three-phase split fixes `135m`
-correctness but gives away too much throughput.
+The 5-lane 54 MHz `-nowidelut` image remains the best hardware-validated
+open-source point, but it has been superseded by the six-lane official-Gowin
+67.5 MHz pass-fenced/minimized-reset image. That newer image raises modeled
+throughput to 6.231 MH/s by improving placement and reset mapping enough for six
+lanes at 67.5 MHz. Pushing beyond this should still be treated as structural
+work: reduce SHA round critical-path depth or area enough that higher clocks,
+more lanes, or lower-cadence round splits validate in hardware instead of only
+closing static timing.
 
 ## Current Selected Build
 
@@ -188,22 +232,25 @@ The current default build is:
 
 ```text
 TARGET=tangnano20k
-SPINAL_LANES=5
-SPINAL_CLOCK_PROFILE=54m
+DEFAULT_FLOW=gowin
+SPINAL_LANES=6
+SPINAL_CLOCK_PROFILE=67m5
 SPINAL_ENABLE_ECHO=0
 SPINAL_ENABLE_HARDCODED=0
 SPINAL_FIXED_CANDIDATE=2
+SPINAL_REGISTER_PASS_OUTPUTS=1
+SPINAL_MINIMIZE_SHA_RESET=1
 SPINAL_ROUND_SKIP=0
 SPINAL_CSA_ROUND=0
-YOSYS_SYNTH_ARGS=-nowidelut
-NEXTPNR_SEED=13
 ```
 
-It models at `4.219 MH/s`. The relevant hardware evidence is the
-`build/hw-prod5-54m-nowidelut-seed13` image, which passed both 50/50 and
-100/100 strict `quick21` host nonce validation. Higher-frequency 5-lane static
-candidates remain historical data only because hardware validation on
-2026-05-26 invalidated them with false positives.
+It models at `6.231 MH/s`. The relevant hardware evidence is the
+`build/gowin/tangminer_gowin_tangnano20k_lanes6_67m5_regpass1_minreset1` image,
+which closed at 67.682 MHz and passed 100/100 strict `quick21` plus 20/20
+`quick14` host nonce validation. The older
+`build/hw-prod5-54m-nowidelut-seed13` image remains the open-source fallback.
+Higher-frequency 5-lane static candidates remain historical data only because
+hardware validation invalidated them with false positives.
 
 ## Historical Main Baseline
 
@@ -376,7 +423,8 @@ Observed impact:
 | Production trim with fixed candidate/no echo/no hardcoded job | Proven useful | Reduces 4-lane LUT4 from about 65% to 58%, and enables a 5-lane 90 MHz build. |
 | 2 production lanes at 67.5 MHz | Hardware-proven lower-clock control | `2x67.5` passes 50/50 strict quick21 host verification and models at 2.109 MH/s. |
 | 3/4 production lanes at 54 MHz | Hardware-proven lane scaling | `3x54` and `4x54` both pass 50/50 strict quick21 host verification. `4x54` models at 3.375 MH/s. |
-| 5 production lanes at 54 MHz with `synth_gowin -nowidelut` | Hardware-proven best multi-lane point | `5x54` passes 50/50 and 100/100 strict quick21 host verification and models at 4.219 MH/s. |
+| 5 production lanes at 54 MHz with `synth_gowin -nowidelut` | Hardware-proven open-source point | `5x54` passes 50/50 and 100/100 strict quick21 host verification and models at 4.219 MH/s. |
+| 6 official-Gowin lanes at 67.5 MHz with pass fence + minimized SHA reset | Hardware-proven current best | Closes at 67.682 MHz, passes 100/100 quick21 and 20/20 quick14, and models at 6.231 MH/s. |
 | 5 production lanes above 54 MHz with `synth_gowin -nowidelut` | Invalidated by hardware | `5x57` and `5x58.5` route cleanly but return false positives; `5x67.5` returns 50/50 false positives. `5x60.75` did not legally place with the tried seeds. |
 | 6 production lanes at 54 MHz with `synth_gowin -nowidelut` | Does not place | Area reaches 86% LUT4 / 72% DFF / 24% ALU and nextpnr cannot find a legal placement at seed 13. |
 | 2 production lanes at 81 MHz | Invalidated by stricter hardware check | Earlier short runs passed, but a 50-job strict retest found 3 false positives. Do not use as a verified point. |
@@ -388,7 +436,7 @@ Observed impact:
 | Global `synth_gowin -noflatten` | Tried, not usable directly | Preserves hierarchy but produces JSON that nextpnr rejects during I/O packing in this flow. |
 | Selective/staged hierarchy preservation | Tried, not helpful | A custom top-only IO-pad flow reaches nextpnr, but area rises to 79% LUT4/70% DFF and placement fails. |
 | SRAM/distributed schedule taps | Useful for DFF pressure, costly for LUTs | 4x111 passes at 122.13 MHz and cuts DFF to 42%, but LUT4 rises to 87%. |
-| 61-cycle round skip | Active but unvalidated | Integrated as `SPINAL_ROUND_SKIP=1`; models `5x54` at 4.426 MH/s, but the latest 5-lane 54 MHz `-nowidelut` seed-13 run failed legal placement at 76% LUT4 / 65% DFF / 22% ALU. It must place and pass strict quick21 plus quick14/23 hardware checks before use. |
+| 61-cycle round skip | Active but unvalidated | Integrated as `SPINAL_ROUND_SKIP=1`; with the default pass fence it would model `6x67.5` at 6.532 MH/s, but the latest 5-lane 54 MHz `-nowidelut` seed-13 round-skip run failed legal placement at 76% LUT4 / 65% DFF / 22% ALU. It must place and pass strict quick21 plus quick14/23 hardware checks before use. |
 | Carry-save one-cycle round | Active but unvalidated | Integrated as `SPINAL_CSA_ROUND=1`; intended for 57 MHz and higher sweeps after round-skip correctness is established. |
 | Wider local pairs, 1x4 or 2x2 | Tried, not helpful so far | Worse Fmax and lower best passing rate than baseline. |
 | Simple timing fences/synchronizers | Tried, not helpful | Top-level digest staging and registered compressor-output `done` both passed simulation but worsened hardware validity around the then-promising 2x81 point. |
@@ -406,8 +454,9 @@ Observed impact:
   checks show `2x67.5` is reliable while `2x81` can still false-positive under
   longer strict runs.
 - Try `3x67.5` or `4x67.5` as comparison points if useful, but they do not beat
-  `5x54` in modeled rate. The tried 5-lane clock steps above 54 MHz returned
-  false positives, and `6x54 -nowidelut` failed legal placement.
+  the validated official-Gowin `6x67.5` pass-fenced/minreset image in modeled
+  rate. The tried 5-lane open-source clock steps above 54 MHz returned false
+  positives, and `6x54 -nowidelut` failed legal placement.
 - Add first-class seed sweeping to `scripts/tools/sweep_spinal_variants.py` so
   seed searches can reuse a synthesized netlist and emit a compact summary.
 - `origin/sram-optimize` baseline sweep at 90/100.286/120 MHz.
@@ -425,11 +474,13 @@ Observed impact:
    `t1` and state-update arithmetic into another phase, then re-run cocotb and
    strict hardware hash checks. The split SHA/control-clock diagnostic did not
    improve the boundary.
-3. If throughput is the priority, stop spending time on small flat 5-lane clock
-   bumps: `5x57` is already invalid on hardware, and no legal PLL point exists
-   between 54 and 57 MHz with the current `CLKOUT` path. The next meaningful
-   performance work is structural: reduce SHA round critical-path depth or area
-   enough that either 57+ MHz validates or 6 lanes at 54 MHz can place.
+3. If throughput is the priority, use the six-lane 67.5 MHz official-Gowin
+   image as the baseline and avoid small flat 5-lane clock bumps: `5x57` is
+   already invalid on hardware, and no legal PLL point exists between 54 and 57
+   MHz with the current `CLKOUT` path. The next meaningful performance work is
+   structural: reduce SHA round critical-path depth or area enough that higher
+   clocks or additional validated lane-level optimizations survive hardware
+   checks.
 4. Build a reusable flash plus `serial_smoke.py --require-target` harness and
    emit a CSV/Markdown result row per image.
 5. Treat 100+ MHz multi-lane static timing wins as untrusted until the host hash

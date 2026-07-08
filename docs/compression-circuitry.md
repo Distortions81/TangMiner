@@ -1,12 +1,12 @@
 # Compression Circuitry
 
-TangMiner uses five compact iterative SHA-256 lanes on the Tang Nano 20K. Each
+TangMiner uses six compact iterative SHA-256 lanes on the Tang Nano 20K. Each
 lane has two `Sha256Compress` blocks: one dedicated to the first Bitcoin
 SHA-256 pass and one dedicated to the second pass. The 64 SHA-256 rounds are
 still not unrolled; each compressor performs one round per FPGA clock.
 
-The top level gives the lanes different nonce residue classes: starts `0..4`
-and stride `5`. The diagrams below show the datapath inside one lane unless
+The top level gives the lanes different nonce residue classes: starts `0..5`
+and stride `6`. The diagrams below show the datapath inside one lane unless
 they explicitly call out the lane wrapper.
 
 ## Per-Lane Nonce Flow
@@ -14,7 +14,7 @@ they explicitly call out the lane wrapper.
 ```mermaid
 flowchart LR
     host["Host job packet<br/>midstate[32], tail[12], target[32]"]
-    lanes["5 lane wrapper<br/>start nonce 0..4<br/>stride = 5"]
+    lanes["6 lane wrapper<br/>start nonce 0..5<br/>stride = 6"]
     regs["Lane job registers<br/>midstate, tail, candidate mode<br/>current_nonce"]
     first_block["First-pass final block<br/>tail || nonce || padding || 0x00000280"]
     comp1["First-pass Sha256Compress<br/>64 rounds from host midstate"]
@@ -23,7 +23,7 @@ flowchart LR
     comp2["Second-pass Sha256Compress<br/>64 rounds from SHA-256 IV"]
     compare["Bitcoin-order digest prefix<br/>cheap candidate check"]
     found["F response<br/>selected nonce only"]
-    next["current_nonce += 5<br/>start next first pass"]
+    next["current_nonce += 6<br/>start next first pass"]
 
     host --> lanes
     lanes --> regs
@@ -55,8 +55,8 @@ it does not build a full 256-bit reversed digest or target comparator in the
 rebuilding the header and double-hashing it. If more than one lane is reporting,
 the top level latches one selected result before UART transmit.
 
-For bring-up with frequent candidate output on the default 5-lane `54.000 MHz`
-20K build, the host tools accept the named target `quick23`:
+For bring-up on the default six-lane `67.500 MHz` 20K build, the host tools
+accept named quick targets such as `quick23`:
 
 ```text
 000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff

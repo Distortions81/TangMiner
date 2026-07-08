@@ -10,18 +10,39 @@ cd "$repo_root"
 source scripts/helpers/common.sh
 
 target="${TARGET:-tangnano20k}"
-lanes="${SPINAL_LANES:-5}"
+flow="${DEFAULT_FLOW:-}"
+if [[ -z "$flow" ]]; then
+  case "$target" in
+    tangnano20k) flow="gowin" ;;
+    tangnano9k) flow="oss" ;;
+    *) flow="oss" ;;
+  esac
+fi
+
+default_lanes=4
+default_register_pass_outputs=0
+default_minimize_sha_reset=0
+if [[ "$target" = "tangnano20k" && "$flow" = "oss" ]]; then
+  default_lanes=5
+elif [[ "$target" = "tangnano20k" ]]; then
+  default_lanes=6
+  default_register_pass_outputs=1
+  default_minimize_sha_reset=1
+fi
+
+lanes="${SPINAL_LANES:-$default_lanes}"
 shared_k="${SPINAL_SHARED_K:-1}"
 enable_echo="${SPINAL_SIM_ENABLE_ECHO:-1}"
 enable_hardcoded="${SPINAL_SIM_ENABLE_HARDCODED:-1}"
 fixed_candidate="${SPINAL_SIM_FIXED_CANDIDATE:-}"
 wide_lanes="${SPINAL_WIDE_LANES:-0}"
 lane_start_stagger="${SPINAL_LANE_START_STAGGER:-0}"
-register_pass_outputs="${SPINAL_REGISTER_PASS_OUTPUTS:-0}"
+register_pass_outputs="${SPINAL_REGISTER_PASS_OUTPUTS:-$default_register_pass_outputs}"
+register_compressor_outputs="${SPINAL_REGISTER_COMPRESSOR_OUTPUTS:-${SPINAL_REGISTER_COMPRESS_OUTPUTS:-0}}"
 two_cycle_round="${SPINAL_TWO_CYCLE_ROUND:-0}"
 three_cycle_round="${SPINAL_THREE_CYCLE_ROUND:-0}"
 register_round_constant="${SPINAL_REGISTER_ROUND_CONSTANT:-0}"
-minimize_sha_reset="${SPINAL_MINIMIZE_SHA_RESET:-0}"
+minimize_sha_reset="${SPINAL_MINIMIZE_SHA_RESET:-$default_minimize_sha_reset}"
 split_sha_clock="${SPINAL_SPLIT_SHA_CLOCK:-0}"
 round_skip="${SPINAL_ROUND_SKIP:-0}"
 csa_round="${SPINAL_CSA_ROUND:-0}"
@@ -45,6 +66,7 @@ tmp="$config.tmp"
   echo "wide_lanes=$wide_lanes"
   echo "lane_start_stagger=$lane_start_stagger"
   echo "register_pass_outputs=$register_pass_outputs"
+  echo "register_compressor_outputs=$register_compressor_outputs"
   echo "two_cycle_round=$two_cycle_round"
   echo "three_cycle_round=$three_cycle_round"
   echo "register_round_constant=$register_round_constant"
@@ -74,6 +96,7 @@ TANGMINER_FIXED_CANDIDATE="$fixed_candidate" \
 TANGMINER_WIDE_LANES="$wide_lanes" \
 TANGMINER_LANE_START_STAGGER="$lane_start_stagger" \
 TANGMINER_REGISTER_PASS_OUTPUTS="$register_pass_outputs" \
+TANGMINER_REGISTER_COMPRESSOR_OUTPUTS="$register_compressor_outputs" \
 TANGMINER_TWO_CYCLE_ROUND="$two_cycle_round" \
 TANGMINER_THREE_CYCLE_ROUND="$three_cycle_round" \
 TANGMINER_REGISTER_ROUND_CONSTANT="$register_round_constant" \

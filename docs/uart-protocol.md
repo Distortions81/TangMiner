@@ -52,8 +52,8 @@ tail[12] || nonce[4] || 0x80 || zero padding || 0x00000280
 ```
 
 It then runs the second SHA-256 pass over the first digest. The current 20K
-bitstream starts five lanes at nonce words `0` through `4`; each lane
-increments by `5`.
+bitstream starts six lanes at nonce words `0` through `5`; each lane increments
+by `6`.
 
 ## Candidate Filtering
 
@@ -70,12 +70,12 @@ Recognized aliases:
 - `quick23`: require the top 23 bits of `reverse_bytes(hash)` to be zero.
 - `quick26`: require the top 26 bits of `reverse_bytes(hash)` to be zero.
 
-On the default 5-lane `54.000 MHz` 20K build:
+On the default six-lane `67.500 MHz` 20K build:
 
 ```text
-quick21: about 0.50 s per candidate
-quick23: about 2.0 s per candidate
-quick26: about 16.0 s per candidate
+quick21: about 0.34 s per candidate
+quick23: about 1.35 s per candidate
+quick26: about 10.8 s per candidate
 ```
 
 Arbitrary 32-byte target values currently select the `quick23` hardware

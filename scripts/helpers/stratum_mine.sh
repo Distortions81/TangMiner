@@ -13,10 +13,10 @@ hardware_target="${HARDWARE_FPGA_TARGET:-quick21}"
 software_difficulty="${SOFTWARE_SUGGEST_DIFFICULTY:-0.0000046566}"
 rtl_target="${RTL_FPGA_TARGET:-quick14}"
 rtl_difficulty="${RTL_SUGGEST_DIFFICULTY:-0.000001}"
-hardware_difficulty="${HARDWARE_SUGGEST_DIFFICULTY:-0.00646187}"
-hardware_clock_mhz="${HARDWARE_CLOCK_MHZ:-${SPINAL_CLOCK_MHZ:-54.000}}"
-hardware_lanes="${HARDWARE_LANES:-${SPINAL_LANES:-5}}"
-hardware_lane_period_cycles="${HARDWARE_LANE_PERIOD_CYCLES:-${SPINAL_LANE_PERIOD_CYCLES:-64}}"
+hardware_difficulty="${HARDWARE_SUGGEST_DIFFICULTY:-0.009539}"
+hardware_clock_mhz="${HARDWARE_CLOCK_MHZ:-${SPINAL_CLOCK_MHZ:-67.500}}"
+hardware_lanes="${HARDWARE_LANES:-${SPINAL_LANES:-6}}"
+hardware_lane_period_cycles="${HARDWARE_LANE_PERIOD_CYCLES:-${SPINAL_LANE_PERIOD_CYCLES:-65}}"
 hardware_baseline_mhs="${HARDWARE_BASELINE_MHS:-4.21875}"
 max_nonces="${SOFTWARE_MAX_NONCES:-100000}"
 
@@ -46,10 +46,10 @@ cleanup() {
 usage() {
   cat <<'EOF'
 usage:
-  scripts/flash-and-mine.sh [--flash|--load] /dev/ttyUSB0
+  scripts/flash-and-mine.sh [--flash|--load] /dev/ttyUSB1
   scripts/mine-software.sh
   scripts/mine-rtl.sh
-  scripts/mine-hardware.sh /dev/ttyUSB0
+  scripts/mine-hardware.sh /dev/ttyUSB1
 
 environment overrides:
   STRATUM_HOST, STRATUM_PORT, STRATUM_USER, STRATUM_PASS

@@ -6,18 +6,51 @@ set -Eeuo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+target="${TARGET:-tangnano20k}"
+flow="${DEFAULT_FLOW:-}"
+if [[ -z "$flow" ]]; then
+  case "$target" in
+    tangnano20k) flow="gowin" ;;
+    tangnano9k) flow="oss" ;;
+    *) flow="oss" ;;
+  esac
+fi
+
+default_lanes=4
+default_register_pass_outputs=0
+default_minimize_sha_reset=0
+if [[ "$target" = "tangnano20k" && "$flow" = "oss" ]]; then
+  default_lanes=5
+elif [[ "$target" = "tangnano20k" ]]; then
+  default_lanes=6
+  default_register_pass_outputs=1
+  default_minimize_sha_reset=1
+fi
+
+export SPINAL_LANES="${SPINAL_LANES:-$default_lanes}"
+export SPINAL_REGISTER_PASS_OUTPUTS="${SPINAL_REGISTER_PASS_OUTPUTS:-$default_register_pass_outputs}"
+export SPINAL_MINIMIZE_SHA_RESET="${SPINAL_MINIMIZE_SHA_RESET:-$default_minimize_sha_reset}"
+
 scripts/helpers/build_stratum_client.sh
 scripts/helpers/build_verilator_pty.sh
 
 benchmark_seconds="${RTL_BENCHMARK_SECONDS:-2}"
-lane_count="${SPINAL_LANES:-5}"
-round_skip="${SPINAL_ROUND_SKIP:-0}"
-round_skip="${round_skip,,}"
-if [[ "$round_skip" == "1" || "$round_skip" == "true" || "$round_skip" == "yes" || "$round_skip" == "on" ]]; then
-  lane_period_cycles="${SPINAL_LANE_PERIOD_CYCLES:-61}"
-else
-  lane_period_cycles="${SPINAL_LANE_PERIOD_CYCLES:-64}"
-fi
+lane_count="$SPINAL_LANES"
+lane_period_cycles="${SPINAL_LANE_PERIOD_CYCLES:-$(
+  python3 - <<'PY'
+import os
+
+def truthy(name):
+    return os.environ.get(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+base = 61 if truthy("SPINAL_ROUND_SKIP") else 64
+mult = 3 if truthy("SPINAL_THREE_CYCLE_ROUND") else 2 if truthy("SPINAL_TWO_CYCLE_ROUND") else 1
+extra = 1 if truthy("SPINAL_REGISTER_PASS_OUTPUTS") else 0
+if mult == 1 and (truthy("SPINAL_REGISTER_COMPRESSOR_OUTPUTS") or truthy("SPINAL_REGISTER_COMPRESS_OUTPUTS")):
+    extra += 1
+print(base * mult + extra)
+PY
+)}"
 
 if [[ -z "${RTL_FPGA_TARGET:-}" || -z "${RTL_SUGGEST_DIFFICULTY:-}" ]]; then
   benchmark_line="$(build/verilator-pty/Vtop --benchmark-seconds "$benchmark_seconds" --lanes "$lane_count" --lane-period-cycles "$lane_period_cycles")"

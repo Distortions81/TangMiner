@@ -15,34 +15,38 @@ Default target:
 
 - Board: Tang Nano 20K, `GW2AR-LV18QN88C8/I7`, 27 MHz input clock.
 - Design: SpinalHDL/Scala top module generated to Verilog.
-- Known-good build: 5 lanes at `54.000 MHz`.
-- Modeled rate: `54.000 MHz * 5 / 64 = 4.219 MH/s`.
-- Hardware validation: strict host nonce validation passes on real hardware.
-- Experimental round-skip mode: `SPINAL_ROUND_SKIP=1` models at
-  `54.000 MHz * 5 / 61 = 4.426 MH/s`, but is not the default until hardware
-  validation proves it.
+- Default build: official Gowin EDA, 6 lanes at `67.500 MHz`, one-cycle
+  pass-output fence, minimized SHA reset fanout.
+- Modeled rate: `67.500 MHz * 6 / 65 = 6.231 MH/s`.
+- Hardware validation: strict host nonce validation passes on real hardware
+  with 100/100 `quick21` and 20/20 `quick14` checks.
 
-The open-source flow remains the hardware-validated default:
+The selected 20K default is:
 
 ```text
 TARGET=tangnano20k
-SPINAL_LANES=5
-SPINAL_CLOCK_PROFILE=54m
+DEFAULT_FLOW=gowin
+SPINAL_LANES=6
+SPINAL_CLOCK_PROFILE=67m5
+SPINAL_REGISTER_PASS_OUTPUTS=1
+SPINAL_MINIMIZE_SHA_RESET=1
 SPINAL_ROUND_SKIP=0
-YOSYS_SYNTH_ARGS=-nowidelut
-NEXTPNR_SEED=13
+SPINAL_CSA_ROUND=0
 ```
 
-Official Gowin EDA timing results for the same 5-lane design:
+The previous open-source `5x54` image remains a hardware-validated fallback,
+but it is no longer the default.
 
-| Clock profile | Result | Routed Fmax |
+Official Gowin EDA timing results for recent 20K builds:
+
+| Build | Result | Hardware |
 | --- | --- | --- |
-| `54m` | closes with margin | `59.776 MHz` |
-| `67m5` | barely closes | `67.505 MHz` |
-| `81m` | fails setup timing | `68.218 MHz` |
+| 6 lanes, `67m5`, pass fence, minimized reset | closes at `67.682 MHz` | 100/100 `quick21`, 20/20 `quick14` valid |
+| 6 lanes, `67m5`, pass fence only | fails setup timing | not flashed |
+| 6 lanes, `67m5`, pass fence, registered K | closes at `67.505 MHz` | invalid quick21 nonces |
 
-Static timing closure is not hardware validation. Higher-clock images still
-need strict host nonce validation before use.
+Static timing closure is not hardware validation. Any new image still needs
+strict host nonce validation before use.
 
 ## Quick Start
 
@@ -52,16 +56,20 @@ Install local tools on Ubuntu 24.04:
 scripts/setup.sh
 ```
 
+The default 20K build also needs Official Gowin EDA with a valid license. The
+Makefile auto-detects local installs under `local/gowin-eda` and several sibling
+repo paths, or you can set `GOWIN_SH=/path/to/gw_sh`.
+
 Build, flash, and mine:
 
 ```sh
-scripts/flash-and-mine.sh /dev/ttyUSB0
+scripts/flash-and-mine.sh /dev/ttyUSB1
 ```
 
 Load to SRAM instead of persistent flash:
 
 ```sh
-scripts/flash-and-mine.sh --load /dev/ttyUSB0
+scripts/flash-and-mine.sh --load /dev/ttyUSB1
 ```
 
 Tang Nano 20K boards are often more reliable with a slower JTAG clock and an
@@ -69,8 +77,11 @@ explicit FTDI channel:
 
 ```sh
 OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000' \
-  scripts/flash-and-mine.sh /dev/ttyUSB0
+  scripts/flash-and-mine.sh /dev/ttyUSB1
 ```
+
+On the Sipeed FTDI bridge, JTAG is commonly `/dev/ttyUSB0` and the FPGA UART is
+commonly `/dev/ttyUSB1`; pass the UART port to the miner.
 
 If the 20K BL616 bridge is not in UART mode, open its console and select:
 
@@ -80,7 +91,7 @@ choose uart
 
 ## Build
 
-Open-source bitstream flow:
+Default 20K build flow, using Official Gowin EDA:
 
 ```sh
 make build
@@ -88,11 +99,10 @@ make load
 make flash
 ```
 
-Official Gowin EDA flow:
+Print the Gowin timing summary for the default build:
 
 ```sh
 make gowin-fmax
-make gowin-fmax SPINAL_CLOCK_PROFILE=67m5
 ```
 
 The Gowin flow auto-detects `local/gowin-eda`, `../MIPS-FPGA/local/gowin-eda`,
@@ -102,17 +112,21 @@ The Gowin flow auto-detects `local/gowin-eda`, `../MIPS-FPGA/local/gowin-eda`,
 Load a Gowin-built bitstream to SRAM and start the host miner:
 
 ```sh
-make gowin-load-and-mine SERIAL_PORT=/dev/ttyUSB0
-```
-
-For the higher-clock Gowin build:
-
-```sh
-make gowin-load-and-mine SERIAL_PORT=/dev/ttyUSB0 SPINAL_CLOCK_PROFILE=67m5
+make gowin-load-and-mine SERIAL_PORT=/dev/ttyUSB1
 ```
 
 Use `gowin-flash-and-mine` instead if you want to write the bitstream to
 persistent FPGA flash.
+
+The previous hardware-validated open-source build is still available:
+
+```sh
+DEFAULT_FLOW=oss make build
+```
+
+For Tang Nano 20K, `DEFAULT_FLOW=oss` selects the historical `5x54`
+`synth_gowin -nowidelut` fallback unless you override the lane or clock
+settings.
 
 Tang Nano 9K is available as a smaller experimental target:
 
@@ -127,7 +141,7 @@ Generated bitstreams are written under `build/`.
 After loading or flashing the FPGA:
 
 ```sh
-scripts/mine-hardware.sh /dev/ttyUSB0
+scripts/mine-hardware.sh /dev/ttyUSB1
 ```
 
 Useful overrides:
@@ -138,7 +152,7 @@ STRATUM_PORT=3333
 STRATUM_USER='wallet.worker'
 STRATUM_PASS=x
 HARDWARE_FPGA_TARGET=quick21
-HARDWARE_SUGGEST_DIFFICULTY=0.00646187
+HARDWARE_SUGGEST_DIFFICULTY=0.009539
 NO_SUBMIT=1
 VERBOSE=1
 ```
@@ -163,10 +177,14 @@ Modeled hashrate:
 clock_hz * SPINAL_LANES / lane_period_cycles
 ```
 
-`lane_period_cycles` is `64` for the validated default. `SPINAL_ROUND_SKIP=1`
-uses a 61-cycle first-pass cadence by precomputing rounds 0..2 once per job and
-stopping the second pass at round 60 for the low-word candidate filter. Treat
-round-skip and `SPINAL_CSA_ROUND=1` builds as experimental until
+`lane_period_cycles` is `65` for the default 20K Gowin build: the full SHA
+pipeline has a 64-cycle base cadence plus one pass-boundary fence. Unfenced
+full-64 builds use `64`. `SPINAL_ROUND_SKIP=1` uses a 61-cycle base cadence by
+precomputing rounds 0..2 once per job and stopping the second pass at round 60
+for the low-word candidate filter. `SPINAL_REGISTER_PASS_OUTPUTS=1` adds one
+lane-cycle pass-boundary fence; `SPINAL_REGISTER_COMPRESSOR_OUTPUTS=1` adds
+another cycle for the one-cycle compressor datapath. Treat round-skip and
+`SPINAL_CSA_ROUND=1` builds as experimental until
 `serial_smoke.py --target quick21 --count 100 --require-target` and quick14/23
 spot checks pass on real hardware.
 
@@ -185,11 +203,13 @@ spot checks pass on real hardware.
 Development image with UART echo and hardcoded smoke work:
 
 ```sh
-make build TARGET=tangnano20k \
+DEFAULT_FLOW=oss make build TARGET=tangnano20k \
   SPINAL_LANES=4 \
   SPINAL_CLOCK_PROFILE=111m \
   SPINAL_ENABLE_ECHO=1 \
   SPINAL_ENABLE_HARDCODED=1 \
+  SPINAL_REGISTER_PASS_OUTPUTS=0 \
+  SPINAL_MINIMIZE_SHA_RESET=0 \
   SPINAL_FIXED_CANDIDATE=
 ```
 

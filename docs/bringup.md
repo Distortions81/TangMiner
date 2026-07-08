@@ -11,6 +11,10 @@ On Ubuntu 24.04, install the local Python, sbt, and OSS CAD Suite dependencies:
 scripts/setup.sh
 ```
 
+The default Tang Nano 20K build uses Official Gowin EDA. Make sure `gw_sh` is on
+`PATH`, set `GOWIN_SH=/path/to/gw_sh`, or place Gowin under one of the
+auto-detected `local/gowin-eda` paths.
+
 ## 2. Verify The Host And RTL Models
 
 Run the lightweight protocol smoke test:
@@ -25,18 +29,19 @@ Run the UART-level RTL tests:
 scripts/sim.sh
 ```
 
-The current default 20K model should report about `4.22 MH/s`:
+The current default 20K model should report about `6.23 MH/s`:
 
 ```text
-54,000,000 Hz * 5 lanes / 64 = 4.219 MH/s
+67,500,000 Hz * 6 lanes / 65 = 6.231 MH/s
 ```
 
-The experimental round-skip path changes the modeled cadence to 61 clocks per
-lane nonce:
+The experimental round-skip path changes the base modeled cadence to 61 clocks
+per lane nonce. With the default pass-output fence still enabled, that is 62
+clocks per lane:
 
 ```text
 SPINAL_ROUND_SKIP=1 scripts/sim.sh
-54,000,000 Hz * 5 lanes / 61 = 4.426 MH/s
+67,500,000 Hz * 6 lanes / 62 = 6.532 MH/s
 ```
 
 Do not treat that higher rate as hardware-valid until strict serial smoke tests
@@ -47,13 +52,13 @@ pass on the FPGA.
 For the normal persistent flow:
 
 ```sh
-scripts/flash-and-mine.sh /dev/ttyUSB0
+scripts/flash-and-mine.sh /dev/ttyUSB1
 ```
 
 For volatile SRAM loading during iteration:
 
 ```sh
-scripts/flash-and-mine.sh --load /dev/ttyUSB0
+scripts/flash-and-mine.sh --load /dev/ttyUSB1
 ```
 
 This builds the bitstream, programs the board, builds the C Stratum client if
@@ -64,8 +69,11 @@ For Tang Nano 20K boards, this programmer command is often more reliable:
 
 ```sh
 OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000' \
-  scripts/flash-and-mine.sh /dev/ttyUSB0
+  scripts/flash-and-mine.sh /dev/ttyUSB1
 ```
+
+On the Sipeed FTDI bridge, JTAG is commonly `/dev/ttyUSB0` and the FPGA UART is
+commonly `/dev/ttyUSB1`; pass the UART port to the miner.
 
 If the onboard BL616 bridge was left in a non-UART mode, open its console and
 select:
@@ -97,7 +105,7 @@ make flash
 Run the host after programming:
 
 ```sh
-scripts/mine-hardware.sh /dev/ttyUSB0
+scripts/mine-hardware.sh /dev/ttyUSB1
 ```
 
 ## 5. UART Smoke Tests
@@ -105,8 +113,9 @@ scripts/mine-hardware.sh /dev/ttyUSB0
 The FPGA UART is `115200 8N1`.
 
 ```sh
-python scripts/tools/serial_smoke.py --timeout 3 /dev/ttyUSB0
-python scripts/tools/serial_smoke.py --target quick23 --watch --timeout 10 /dev/ttyUSB0
+python scripts/tools/serial_smoke.py --timeout 3 /dev/ttyUSB1
+python scripts/tools/serial_smoke.py --target quick21 --count 100 --require-target /dev/ttyUSB1
+python scripts/tools/serial_smoke.py --target quick14 --count 20 --require-target /dev/ttyUSB1
 ```
 
 The smoke test sends an easy genesis-style job, expects an `F || nonce`

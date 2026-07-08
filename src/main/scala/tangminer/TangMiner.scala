@@ -20,6 +20,7 @@ case class TangMinerHardwareOptions(
   fixedCandidateMode: Option[Int] = None,
   wideLaneBlock: Boolean = false,
   registerPassOutputs: Boolean = false,
+  registerCompressorOutputs: Boolean = false,
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
@@ -669,6 +670,7 @@ object Sha256Pass {
 
 class Sha256BitcoinFirstPass(
   registerOutputs: Boolean = false,
+  registerCompressorOutputs: Boolean = false,
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
@@ -691,7 +693,7 @@ class Sha256BitcoinFirstPass(
   }
 
   val core = new Sha256CompressWords(
-    registerOutput = registerOutputs,
+    registerOutput = registerCompressorOutputs,
     twoCycleRound = twoCycleRound,
     threeCycleRound = threeCycleRound,
     registerRoundConstant = registerRoundConstant,
@@ -957,6 +959,7 @@ class Sha256BitcoinFirstPassPrefix(
 
 class Sha256BitcoinFirstPassPrepared(
   registerOutputs: Boolean = false,
+  registerCompressorOutputs: Boolean = false,
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
@@ -979,7 +982,7 @@ class Sha256BitcoinFirstPassPrepared(
   }
 
   val core = new Sha256CompressWords(
-    registerOutput = registerOutputs,
+    registerOutput = registerCompressorOutputs,
     twoCycleRound = twoCycleRound,
     threeCycleRound = threeCycleRound,
     registerRoundConstant = registerRoundConstant,
@@ -1019,13 +1022,33 @@ class Sha256BitcoinFirstPassPrepared(
   core.io.stateIn := io.prefixState
   core.io.words := words
 
-  io.done := core.io.done
   io.round := core.io.roundOut
-  io.digest := Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
+  val digestRaw = Sha256Pass.addFeedForward(io.midstate, core.io.workOut)
+  if (registerOutputs) {
+    val doneReg = Reg(Bool()) init False
+    val digestReg = Reg(Bits(256 bits)) init 0
+
+    io.done := doneReg
+    io.digest := digestReg
+
+    when(io.reset) {
+      doneReg := False
+      digestReg := 0
+    } otherwise {
+      doneReg := core.io.done
+      when(core.io.done) {
+        digestReg := digestRaw
+      }
+    }
+  } else {
+    io.done := core.io.done
+    io.digest := digestRaw
+  }
 }
 
 class Sha256BitcoinSecondPass(
   registerOutputs: Boolean = false,
+  registerCompressorOutputs: Boolean = false,
   twoCycleRound: Boolean = false,
   threeCycleRound: Boolean = false,
   registerRoundConstant: Boolean = false,
@@ -1044,7 +1067,7 @@ class Sha256BitcoinSecondPass(
   }
 
   val core = new Sha256CompressWords(
-    registerOutput = registerOutputs,
+    registerOutput = registerCompressorOutputs,
     twoCycleRound = twoCycleRound,
     threeCycleRound = threeCycleRound,
     registerRoundConstant = registerRoundConstant,
@@ -1228,6 +1251,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   if (options.roundSkip) {
     val shaFirst = new Sha256BitcoinFirstPassPrepared(
       options.registerPassOutputs,
+      options.registerCompressorOutputs,
       options.twoCycleRound,
       options.threeCycleRound,
       options.registerRoundConstant,
@@ -1251,6 +1275,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   } else {
     val shaFirst = new Sha256BitcoinFirstPass(
       options.registerPassOutputs,
+      options.registerCompressorOutputs,
       options.twoCycleRound,
       options.threeCycleRound,
       options.registerRoundConstant,
@@ -1274,6 +1299,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
 
   val shaSecond = new Sha256BitcoinSecondPass(
     options.registerPassOutputs,
+    options.registerCompressorOutputs,
     options.twoCycleRound,
     options.threeCycleRound,
     options.registerRoundConstant,
@@ -2207,6 +2233,10 @@ object GenerateVerilog extends App {
     wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
     registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
+    registerCompressorOutputs = envBoolean("TANGMINER_REGISTER_COMPRESSOR_OUTPUTS", default = false) ||
+      envBoolean("TANGMINER_REGISTER_COMPRESS_OUTPUTS", default = false) ||
+      envBoolean("SPINAL_REGISTER_COMPRESSOR_OUTPUTS", default = false) ||
+      envBoolean("SPINAL_REGISTER_COMPRESS_OUTPUTS", default = false),
     twoCycleRound = envBoolean("TANGMINER_TWO_CYCLE_ROUND", default = false) ||
       envBoolean("SPINAL_TWO_CYCLE_ROUND", default = false),
     threeCycleRound = envBoolean("TANGMINER_THREE_CYCLE_ROUND", default = false) ||
@@ -2256,6 +2286,10 @@ object GenerateSimVerilog extends App {
     wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
     registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
+    registerCompressorOutputs = envBoolean("TANGMINER_REGISTER_COMPRESSOR_OUTPUTS", default = false) ||
+      envBoolean("TANGMINER_REGISTER_COMPRESS_OUTPUTS", default = false) ||
+      envBoolean("SPINAL_REGISTER_COMPRESSOR_OUTPUTS", default = false) ||
+      envBoolean("SPINAL_REGISTER_COMPRESS_OUTPUTS", default = false),
     twoCycleRound = envBoolean("TANGMINER_TWO_CYCLE_ROUND", default = false) ||
       envBoolean("SPINAL_TWO_CYCLE_ROUND", default = false),
     threeCycleRound = envBoolean("TANGMINER_THREE_CYCLE_ROUND", default = false) ||

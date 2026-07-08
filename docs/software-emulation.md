@@ -85,8 +85,10 @@ The tests drive real UART bits into `uart_rx_pin`, read real UART bits from
 - `TNJ` with `quick3` returns the expected nonce-three genesis candidate.
 - `TNH` runs the built-in nonce-zero genesis job in simulation builds.
 - The measured RTL cadence matches one tested nonce every
-  `lane_period_cycles / lane_count` fabric clocks. The validated default uses
-  `lane_period_cycles=64`; experimental `SPINAL_ROUND_SKIP=1` uses `61`.
+  `lane_period_cycles / lane_count` fabric clocks. The default 20K build uses
+  `lane_period_cycles=65` because `SPINAL_REGISTER_PASS_OUTPUTS=1` adds a
+  pass-boundary fence to the 64-cycle SHA cadence. Unfenced full-64 builds use
+  `64`; experimental `SPINAL_ROUND_SKIP=1` uses a 61-cycle base cadence.
 
 The normal `make build` path uses production timing and disables simulation-only
 echo and hardcoded-job support. The simulation build enables those features so

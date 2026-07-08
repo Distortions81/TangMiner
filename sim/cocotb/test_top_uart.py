@@ -21,9 +21,9 @@ from tangminer_emulator import (
 
 
 CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
-HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "100286000"))
-LANE_COUNT = int(os.environ.get("LANE_COUNT", "5"))
-EXPECTED_LANE_PERIOD_CYCLES = int(os.environ.get("EXPECTED_LANE_PERIOD_CYCLES", "0"))
+HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "67500000"))
+LANE_COUNT = int(os.environ.get("LANE_COUNT", "6"))
+EXPECTED_LANE_PERIOD_CYCLES = int(os.environ.get("EXPECTED_LANE_PERIOD_CYCLES", "65"))
 
 
 def _clock(signal, period, unit):
@@ -179,7 +179,12 @@ async def top_hashes_genesis_nonce_quick14(dut):
 
     await _uart_write(dut, b"TNJ" + payload)
 
-    response = await _uart_read(dut, 5, max_cycles=600_000)
+    expected_lane_period = EXPECTED_LANE_PERIOD_CYCLES or 64
+    quick14_wait_cycles = max(
+        600_000,
+        int((34368 + LANE_COUNT) * expected_lane_period / LANE_COUNT) + 100_000,
+    )
+    response = await _uart_read(dut, 5, max_cycles=quick14_wait_cycles)
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x86\x40"
     assert meets_target(expected_hash, QUICK14_TARGET)
