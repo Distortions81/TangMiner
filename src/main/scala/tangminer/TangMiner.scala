@@ -3399,6 +3399,7 @@ object GenerateSimVerilog extends App {
   def envOptionalInt(names: Seq[String]): Option[Int] =
     names.collectFirst(Function.unlift(sys.env.get)).filter(_.nonEmpty).map(_.toInt)
 
+  val targetDirectory = sys.env.getOrElse("TANGMINER_VERILOG_DIR", "build/spinal-sim")
   val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 5)
   val laneStartStagger = envInt(Seq("TANGMINER_LANE_START_STAGGER", "SPINAL_LANE_START_STAGGER"), 0)
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), 8)
@@ -3445,7 +3446,7 @@ object GenerateSimVerilog extends App {
   )
 
   SpinalConfig(
-    targetDirectory = "build/spinal-sim",
+    targetDirectory = targetDirectory,
     defaultConfigForClockDomains = ClockDomainConfig(resetKind = BOOT)
   ).generateVerilog(new Top(
     clksPerBit = clksPerBit,

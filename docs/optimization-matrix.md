@@ -160,6 +160,7 @@ the best RTL two-phase point so far, but it remains over the 20K DFF limit:
 | 4 lanes, `126m`, sync context-memory slots, FIFO depth 4 | strict cocotb passes 7/7; hardware counter reports 64-cycle lane period, 28 counted attempts, and 7.875000 MH/s | synthesis resource failure, 16415 DFF vs 15750 available |
 | 4 lanes, `126m`, same plus conditional K/fixed-stop register trims | strict cocotb passes 7/7; same 7.875000 MH/s modeled rate | synthesis resource failure, 16399 DFF vs 15750 available |
 | 4 lanes, `126m`, same plus `GOWIN_REPLICATE_RESOURCES=0` | generated and synthesized on 2026-07-08 | unchanged synthesis resource failure, 16399 DFF vs 15750 available |
+| 4 lanes, `126m`, split state/schedule context memories with early schedule writeback | rejected by strict cocotb: quick14/quick21 time out and the counter sees a 130-cycle gap | not synthesized |
 | 4 lanes, `126m`, FIFO depth 2 | rejected by strict cocotb: quick14/quick21 time out and the counter sees a 130-cycle gap | not run |
 | 4 lanes, `126m`, direct first-pass to second-pass handoff | one-lane strict cocotb passes 7/7 | synthesis resource failure, 29063 DFF vs 15750 available |
 | 4 lanes, `126m`, no pass-output fence or two-phase first-pass fence bypass | strict cocotb passes 7/7 | synthesis resource failure, about 23110-23111 logic vs 20736 available |
