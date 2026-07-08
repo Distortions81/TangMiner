@@ -15,11 +15,13 @@ Default target:
 
 - Board: Tang Nano 20K, `GW2AR-LV18QN88C8/I7`, 27 MHz input clock.
 - Design: SpinalHDL/Scala top module generated to Verilog.
-- Default build: official Gowin EDA, 6 lanes at `67.500 MHz`, one-cycle
-  pass-output fence, minimized SHA reset fanout.
+- Default build: official Gowin EDA, 6 lanes at `67.500 MHz`, local K
+  constants, one-cycle pass-output fence, minimized SHA reset fanout.
 - Modeled rate: `67.500 MHz * 6 / 65 = 6.231 MH/s`.
-- Hardware validation: strict host nonce validation passes on real hardware
-  with 100/100 `quick21` and 20/20 `quick14` checks.
+- Hardware validation: strict host nonce validation passes on real hardware.
+  The latest SRAM-loaded revalidation on 2026-07-08 passed 100/100 `quick21`
+  checks, with the hardware nonce-attempt counter queried over UART through
+  `TNC`.
 
 The selected 20K default is:
 
@@ -28,6 +30,7 @@ TARGET=tangnano20k
 DEFAULT_FLOW=gowin
 SPINAL_LANES=6
 SPINAL_CLOCK_PROFILE=67m5
+SPINAL_SHARED_K=0
 SPINAL_REGISTER_PASS_OUTPUTS=1
 SPINAL_MINIMIZE_SHA_RESET=1
 SPINAL_ROUND_SKIP=0
@@ -41,9 +44,28 @@ Official Gowin EDA timing results for recent 20K builds:
 
 | Build | Result | Hardware |
 | --- | --- | --- |
-| 6 lanes, `67m5`, pass fence, minimized reset | closes at `67.682 MHz` | 100/100 `quick21`, 20/20 `quick14` valid |
+| 6 lanes, `67m5`, local K, pass fence, minimized reset | closes at `68.525 MHz` in the 2026-07-08 rerun | 100/100 `quick21` valid with `TNC` counter reads; 20/20 `quick14` spot check valid |
+| 5 lanes, `67m5`, local K, pass fence, minimized reset | closes at `67.507 MHz` | 20/20 `quick21` valid |
 | 6 lanes, `67m5`, pass fence only | fails setup timing | not flashed |
-| 6 lanes, `67m5`, pass fence, registered K | closes at `67.505 MHz` | invalid quick21 nonces |
+| 6 lanes, `67m5`, local K, pass fence, registered K | fails setup, Fmax `64.099 MHz` | not flashed |
+| 6 lanes, `81m`, local K, pass fence, minimized reset, shared job state | strict cocotb passes at 65-cycle cadence, modeled `7.48 MH/s`; routes but fails setup, Fmax `73.603 MHz` | not flashed |
+| 6 lanes, `81m`, shared K, CSA-lite, pass fence, minimized reset, `GOWIN_ROUTE_MAXFAN=12` | strict cocotb passes at 65-cycle cadence, modeled `7.48 MH/s`; closes at Fmax `81.015 MHz` with 20299/20736 logic and 10283/10368 CLS | rejected: `quick21` returned 43 false positives in 100 jobs |
+| 6 lanes, `84m`, local K, pass fence + first-pass feed-forward fence, minimized reset, shared job state | strict cocotb passes at 66-cycle cadence, modeled `7.64 MH/s`; routes but fails setup, Fmax `77.155 MHz`; `GOWIN_ROUTE_MAXFAN=12` is unchanged at Fmax `77.106 MHz` | not flashed |
+| 6 lanes, `84m`, previous row plus balanced round adder | strict cocotb passes, but timing worsens to Fmax `71.450 MHz` | not flashed |
+| 7 lanes, `67m5`, host-round-skip, pass fence, minimized reset | strict cocotb passes at 62-cycle cadence, modeled `7.62 MH/s`; route-option-0 Fmax `57.929 MHz`, unchanged after trimming second-pass output to the candidate low word | not flashed |
+| 6 lanes, `81m`, host-round-skip, pass fence, minimized reset | routes but fails setup, Fmax `69.220 MHz`; shared-K CSA-lite with `GOWIN_ROUTE_MAXFAN=12` route-option-0 reaches only Fmax `73.456 MHz` | not flashed |
+| 7 lanes, `67m5`, host-round-skip + first-pass feed-forward fence | strict cocotb passes at 63-cycle cadence, modeled `7.50 MH/s`; route-option-0 Fmax `55.354 MHz` | not flashed |
+| 5 lanes, `67m5`, local K, two rounds/cycle, pass fence, minimized reset | validates in cocotb at 33-cycle cadence but fails placement | not flashed |
+| 4 lanes, `67m5`/`81m`, local K, two rounds/cycle, pass fence, minimized reset | routes but fails setup, Fmax `42.851`/`44.450 MHz` | not flashed |
+| 4 lanes, `67m5`, local K, two-round pipeline, pass fence, minimized reset | strict cocotb passes at 33-cycle cadence, modeled `8.18 MH/s`; synthesis exceeds 20K resources, 31126 logic | not flashed |
+| 3 lanes, `84m`, local K, two-round pipeline, pass fence, minimized reset | synthesis exceeds 20K resources, 23476 logic | not flashed |
+| 2 lanes, `126m`, local K, two-round pipeline, pass fence, minimized reset | routes but fails setup, Fmax `61.831 MHz`; actual at Fmax is `3.75 MH/s` | not flashed |
+| 5 lanes, `100m286`, local K, register-only two-phase round pipeline, pass fence, minimized reset | modeled `7.83 MH/s`; synthesis exceeds 20K logic resources, 25412/20736 | not flashed |
+| 6 lanes, `81m`, local K, register-only two-phase round pipeline, pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.59 MH/s`; synthesis exceeds 20K DFF resources, 33155/15750 | not flashed |
+| 4 lanes, `126m`, local K, async context-memory two-phase round pipeline, pass fence, minimized reset | strict cocotb passes at 65-cycle cadence, modeled `7.75 MH/s`; synthesis exceeds 20K DFF resources, 21515/15750 | not flashed |
+| 4 lanes, `126m`, local K, sync context-memory two-phase round pipeline, FIFO depth 4, pass fence, minimized reset | strict cocotb passes at 64-cycle cadence, modeled `7.875 MH/s`; synthesis still exceeds 20K DFF resources, 16399/15750 after small register trims | not flashed |
+| 4 lanes, `126m`, sync context-memory two-phase with FIFO depth 2 | strict cocotb rejects it: quick14/quick21 time out and the counter sees a 130-cycle gap | not flashed |
+| 4 lanes, `126m`, sync context-memory two-phase with first-pass output fence bypass or no pass fence | strict cocotb passes, but Gowin shifts failure from DFF to logic overuse, about 23110-23111/20736 logic | not flashed |
 
 Static timing closure is not hardware validation. Any new image still needs
 strict host nonce validation before use.
@@ -183,10 +205,28 @@ full-64 builds use `64`. `SPINAL_ROUND_SKIP=1` uses a 61-cycle base cadence by
 precomputing rounds 0..2 once per job and stopping the second pass at round 60
 for the low-word candidate filter. `SPINAL_REGISTER_PASS_OUTPUTS=1` adds one
 lane-cycle pass-boundary fence; `SPINAL_REGISTER_COMPRESSOR_OUTPUTS=1` adds
-another cycle for the one-cycle compressor datapath. Treat round-skip and
-`SPINAL_CSA_ROUND=1` builds as experimental until
-`serial_smoke.py --target quick21 --count 100 --require-target` and quick14/23
-spot checks pass on real hardware.
+another cycle for the one-cycle compressor datapath.
+`SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD=1` adds a targeted first-pass
+feed-forward fence in the full path and host-round-skip experiments.
+`SPINAL_TWO_ROUNDS_PER_CYCLE=1` is an experimental, local-K-only partially
+unrolled compressor; it passes RTL strict nonce checks, but current 20K Gowin
+builds either fail placement or fail setup timing, so it is not a selected
+hardware image. `SPINAL_TWO_ROUND_PIPELINE=1` is an experimental staged
+two-round compressor for full SHA256d mode only; it validates in strict RTL at a
+33-cycle steady-state nonce-start cadence, but current 20K builds fail resource
+or timing closure. `SPINAL_BALANCED_ROUND_ADDER=1` is an experimental one-cycle
+round-adder mapping; it validates in RTL but worsened the measured Gowin Fmax.
+`SPINAL_CSA_ROUND=1` uses carry-save reduction for the round state adders.
+`SPINAL_CSA_SCHEDULE=1` also maps the message-schedule adder to CSA, but the
+full CSA form is usually too large for dense 20K builds, so the schedule path is
+left normal by default.
+Treat round-skip, host-round-skip, first-pass feed-forward, two-round,
+two-round-pipeline, balanced-adder, and `SPINAL_CSA_ROUND=1` builds as
+experimental until
+`serial_smoke.py --target quick21 --count 100 --require-target` passes on real
+hardware. Match additional spot-check targets to the hardware candidate-filter
+mode; the selected default uses `SPINAL_FIXED_CANDIDATE=2`, so it is a quick21
+filter image.
 
 `SPINAL_FIXED_CANDIDATE` values:
 
@@ -228,6 +268,7 @@ Start with:
 - [docs/uart-protocol.md](docs/uart-protocol.md)
 - [docs/software-emulation.md](docs/software-emulation.md)
 - [docs/hardware-overview.md](docs/hardware-overview.md)
+- [docs/sha256d-pipeline-design.md](docs/sha256d-pipeline-design.md)
 
 ## License
 

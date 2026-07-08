@@ -1,18 +1,25 @@
 # Optimization Matrix
 
-Snapshot date: 2026-07-07.
+Snapshot date: 2026-07-08.
 
 This note summarizes the optimization branches and local build artifacts that
 exist in this checkout. It keeps historical sweep data because that explains
 the current defaults. The active branch graph is:
 
 - `main` / `origin/main`: selected hardware-validated six-lane 20K design at
-  `67.500 MHz`, built with Official Gowin EDA, `SPINAL_REGISTER_PASS_OUTPUTS=1`,
-  and `SPINAL_MINIMIZE_SHA_RESET=1`.
+  `67.500 MHz`, built with Official Gowin EDA, local K constants,
+  `SPINAL_REGISTER_PASS_OUTPUTS=1`, and `SPINAL_MINIMIZE_SHA_RESET=1`.
 - The previous open-source `5x54` `synth_gowin -nowidelut` image remains a
   hardware-validated fallback, but it is no longer the selected default.
-- `main` also has unvalidated `SPINAL_ROUND_SKIP=1` and `SPINAL_CSA_ROUND=1`
-  experimental knobs. They are not selected defaults.
+- `main` also has unvalidated `SPINAL_ROUND_SKIP=1`,
+  `SPINAL_HOST_ROUND_SKIP=1`, `SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD=1`, and
+  `SPINAL_CSA_ROUND=1` experimental knobs. `SPINAL_TWO_ROUNDS_PER_CYCLE=1` and
+  `SPINAL_TWO_ROUND_PIPELINE=1` are the first partially unrolled/deeper pipeline
+  experiments; `SPINAL_TWO_PHASE_ROUND_PIPELINE=1` is a follow-up per-round
+  two-phase pipeline experiment that validates in RTL but exceeds 20K register
+  resources at useful lane counts. `SPINAL_SHARE_JOB_STATE=1` and
+  `SPINAL_BALANCED_ROUND_ADDER=1` are timing diagnostics for the current
+  full-path core. None are selected defaults.
 - `width-exp` / `origin/width-exp`: historical 61-cycle round skipping and
   wider local A/B compressor-pair lane experiments.
 - `origin/sram-optimize`: experimental SHA message schedule storage using
@@ -21,7 +28,7 @@ the current defaults. The active branch graph is:
 No `AGENTS.md` or `agents.md` file exists inside this repository at the time of
 this snapshot.
 
-## 2026-07-07 Active Experimental Knobs
+## 2026-07-08 Active Experimental Knobs
 
 Round-skip has been integrated into the active SpinalHDL design behind
 `SPINAL_ROUND_SKIP=1`. It prepares first-pass rounds 0..2 once per job, starts
@@ -43,9 +50,23 @@ as the open-source fallback; the selected build is now the official-Gowin
 six-lane 67.5 MHz pass-fenced/minimized-reset image.
 
 `SPINAL_CSA_ROUND=1` is also available as a one-cycle datapath experiment. It
-uses carry-save reduction for the SHA round addition trees and is mutually
-exclusive with the existing two-cycle and three-cycle round options. It is for
-57 MHz and higher sweeps after round-skip correctness is established.
+uses carry-save reduction for the SHA round state addition trees and is mutually
+exclusive with the existing two-cycle and three-cycle round options.
+`SPINAL_CSA_SCHEDULE=1` additionally maps the message-schedule adder to CSA; it
+is off by default because the full-schedule CSA form exceeds area on dense
+six-lane 20K builds. The local-K CSA-lite 6-lane 81 MHz build is still slightly
+too large at 20954 logic cells versus 20736 available. The shared-K CSA-lite
+variant fits and, with `GOWIN_ROUTE_MAXFAN=12`, closes static timing at
+81.015 MHz with 0 setup/hold violations, but hardware rejects it: strict
+`quick21` returned 43 false positives in 100 jobs on `/dev/ttyUSB1`. Do not
+count CSA mode as a hashrate improvement until a strict hardware run passes.
+
+`SPINAL_BALANCED_ROUND_ADDER=1` is an alternate one-cycle round-adder mapping
+that recursively balances the SHA addition trees. It is correctness-valid in
+strict RTL, but it is not a timing win: the 6-lane 84 MHz full-path candidate
+with pass fence, first-pass feed-forward fence, minimized reset, and shared job
+state routed at only 71.450 MHz Fmax versus 77.155 MHz without the balanced
+adder.
 
 `SPINAL_REGISTER_PASS_OUTPUTS=1` now means a one-cycle pass-output fence. It
 registers the first-pass digest before the second-pass message load and registers
@@ -53,45 +74,174 @@ the second-pass low word before candidate checking. The older two-cycle
 compressor-plus-pass fence is still reproducible by also setting
 `SPINAL_REGISTER_COMPRESSOR_OUTPUTS=1`.
 
-On 2026-07-07, a six-lane official Gowin build at 67.5 MHz closed and passed
-hardware checks with:
+`SPINAL_SHARE_JOB_STATE=1` hoists the job midstate/tail/candidate-mode registers
+out of individual lanes and shares one registered job state across all lanes.
+It does not change lane cadence. The 6-lane 81 MHz full-path candidate with
+local K, pass fence, minimized reset, and shared job state validates in strict
+RTL at a 65-cycle cadence for a modeled 7.48 MH/s, but Gowin routes it at only
+73.603 MHz Fmax, or 71.478 MHz with route option 0. At measured Fmax that is
+about 6.79 MH/s, below the 20% target.
+
+`SPINAL_HOST_ROUND_SKIP=1` accepts host-provided first-pass prefix state and
+message-schedule tail words. It validates in RTL with strict nonce checks, but
+the dense speedup candidates have not closed timing on the 20K. The best modeled
+shape, 7 lanes at 67.5 MHz with a 62-cycle lane period, would be 7.62 MH/s; it
+routes only with route option 0 and then fails setup at 57.929 MHz. The narrower
+6-lane 81 MHz shape routes but fails setup at 69.220 MHz. Removing the
+pass-output fence gives a 61-cycle modeled period but makes timing worse:
+7 lanes at 67.5 MHz routes with option 0 and fails setup at 51.612 MHz.
+Follow-up shared-K/CSA host-round-skip runs do not change that conclusion:
+7 lanes at 67.5 MHz with shared K and CSA-lite exceeds resources at 23587
+logic cells, shared K without CSA fails normal routing with 1617 unrouted nets
+and route option 0 falls to 54.002 MHz Fmax, and 6 lanes at 81 MHz with shared K
+plus CSA-lite fails normal routing with 749 unrouted nets while route option 0
+only reaches 73.456 MHz Fmax.
+
+`SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD=1` is a targeted timing experiment that
+captures the final first-pass work state and delays the first-pass `done` by one
+cycle before the second pass. In full-path mode, 6 lanes at 84 MHz with local K,
+pass fence, minimized reset, and shared job state validates in strict RTL at a
+66-cycle cadence for a modeled 7.64 MH/s, but Gowin routes it at only 77.155 MHz
+Fmax, or 77.106 MHz with `GOWIN_ROUTE_MAXFAN=12`, about 7.01 MH/s at measured
+Fmax. In host-round-skip mode, 7 lanes at 67.5 MHz validates in RTL at
+63 cycles, normal routing fails with 10546 unrouted nets, and route option 0
+fails setup at 55.354 MHz.
+
+The hardware nonce-attempt counter now uses a small registered popcount and a
+split 32/32 accumulator. That keeps `TNC` measurement unambiguous without making
+the counter a SHA timing path in dense host-round-skip builds.
+
+The second-pass compressor now exposes a separate 32-bit candidate low-word
+output so the host-round-skip path does not need to route the full 256-bit final
+work state into the candidate filter. This is correctness-neutral and the
+default six-lane target-alias RTL suite still passes 7/7 tests, but it did not
+improve the dense 7-lane host-round-skip timing point: route option 0 still
+fails setup at 57.929 MHz.
+
+`SPINAL_TWO_ROUND_PIPELINE=1` is the first deeper SHA compressor experiment. It
+keeps two context slots inside each compressor and starts a new nonce every
+`ceil(64 / 2) + 1 = 33` clocks in full SHA256d mode. The 4-lane 67.5 MHz shape
+passes strict cocotb with 44 counted attempts and models at
+`4 * 67.5 / 33 = 8.18 MH/s`, which is above the 20% target. It is not a usable
+20K image: 4 lanes exceeds synthesis resources with 31126 logic, 3 lanes at
+84 MHz also exceeds resources with 23476 logic, and 2 lanes at 126 MHz routes
+but fails setup at 61.831 MHz Fmax, only about 3.75 MH/s at measured Fmax. The
+top failing paths are still inside the SHA round-pair/output path, so the next
+architecture needs smaller per-round pipeline stages or a fuller streaming
+SHA256d pipeline.
+
+`SPINAL_TWO_PHASE_ROUND_PIPELINE=1` splits one SHA round into a registered
+prepare phase (`t1`, `t2`, message-schedule next word) and a completion phase.
+The first register-only version interleaves two context slots so the compressor
+can accept a new full SHA256d start every 64 clocks. That is correctness-valid
+in RTL and keeps the hardware nonce-attempt counter unambiguous:
+
+| Build | RTL result | Gowin result |
+| --- | --- | --- |
+| 1 lane, `67m5`, local K, pass fence, minimized reset | strict cocotb passes 7/7; hardware counter reports 64-cycle lane period and 1.05 MH/s | not run |
+| 5 lanes, `100m286`, local K, pass fence, minimized reset | not run; modeled at 7.83 MH/s from the same 64-cycle cadence | synthesis resource failure, 25412 logic vs 20736 available |
+| 6 lanes, `81m`, local K, pass fence, minimized reset | strict cocotb passes 7/7; hardware counter reports 64-cycle lane period, 42 counted attempts, and 7.593750 MH/s | synthesis resource failure, 33155 DFF vs 15750 available |
+
+The first context-memory version moved the slot contexts into a tiny async-read
+`Mem`. It validated in strict RTL, but blocked starts on context writeback cycles
+and still mapped too much storage into DFFs:
+
+| Build | RTL result | Gowin result |
+| --- | --- | --- |
+| 1 lane, `67m5`, async context-memory slots | strict cocotb passes 7/7; hardware counter reports 65-cycle lane period and 1.038 MH/s | not run |
+| 4 lanes, `126m`, async context-memory slots | strict cocotb passes 7/7; hardware counter reports 65-cycle lane period, 28 counted attempts, and 7.753846 MH/s | synthesis resource failure, 21515 DFF vs 15750 available |
+
+The current sync-read context-memory form recovers the 64-cycle cadence and is
+the best RTL two-phase point so far, but it remains over the 20K DFF limit:
+
+| Build | RTL result | Gowin result |
+| --- | --- | --- |
+| 1 lane, `67m5`, sync context-memory slots | strict cocotb passes 7/7; hardware counter reports 64-cycle lane period and 1.054688 MH/s | not run |
+| 4 lanes, `126m`, sync context-memory slots, FIFO depth 4 | strict cocotb passes 7/7; hardware counter reports 64-cycle lane period, 28 counted attempts, and 7.875000 MH/s | synthesis resource failure, 16415 DFF vs 15750 available |
+| 4 lanes, `126m`, same plus conditional K/fixed-stop register trims | strict cocotb passes 7/7; same 7.875000 MH/s modeled rate | synthesis resource failure, 16399 DFF vs 15750 available |
+| 4 lanes, `126m`, FIFO depth 2 | rejected by strict cocotb: quick14/quick21 time out and the counter sees a 130-cycle gap | not run |
+| 4 lanes, `126m`, direct first-pass to second-pass handoff | one-lane strict cocotb passes 7/7 | synthesis resource failure, 29063 DFF vs 15750 available |
+| 4 lanes, `126m`, no pass-output fence or two-phase first-pass fence bypass | strict cocotb passes 7/7 | synthesis resource failure, about 23110-23111 logic vs 20736 available |
+
+The two-phase result proves the scheduler/counter model, but it is not yet a
+usable 20K speedup. Five register-only lanes already exceed logic resources, and
+four sync-memory context lanes at the high clock needed for +20% still exceed
+DFFs. Padding the context memory to 16 entries did not materially change Gowin's
+DFF mapping, and removing output fences moves the failure to LUT/ALU logic
+overuse. The next storage design needs a RAM-friendly schedule/context split or
+a streaming SHA256d pipeline with fewer replicated context shells.
+
+On 2026-07-08, the selected six-lane official Gowin build at 67.5 MHz uses
+local K constants and passed hardware checks with:
 
 ```sh
 make gowin-fmax TARGET=tangnano20k \
   SPINAL_LANES=6 \
   SPINAL_CLOCK_PROFILE=67m5 \
+  SPINAL_SHARED_K=0 \
   SPINAL_REGISTER_PASS_OUTPUTS=1 \
   SPINAL_MINIMIZE_SHA_RESET=1 \
-  GOWIN_PROJECT_NAME=tangminer_gowin_tangnano20k_lanes6_67m5_regpass1_minreset1
+  GOWIN_PROJECT_NAME=tangminer_gowin_tangnano20k_lanes6_67m5_regpass1_minreset1_localK
 ```
 
 This build runs one lane nonce every 65 clocks, modeled as
-`6 * 67.5 / 65 = 6.231 MH/s`. Static timing closed at 67.682 MHz reported Fmax
+`6 * 67.5 / 65 = 6.231 MH/s`. Static timing closed at 67.644 MHz reported Fmax
 against a 67.499 MHz constraint. Resource use dropped versus the unfenced
 six-lane baseline because `SPINAL_MINIMIZE_SHA_RESET=1` let Gowin map state into
-SSRAM: 77% logic, 74% registers, 88% CLS. Hardware validation passed 100/100
-strict quick21 and 20/20 quick14 returned nonces on `/dev/ttyUSB1`, and the
-board was then started mining from the SRAM-loaded image.
+SSRAM: 82% logic, 75% registers, 92% CLS. Hardware validation passed 100/100
+strict quick21 returned nonces on `/dev/ttyUSB1`, with the hardware
+nonce-attempt counter queried through `TNC`.
 
 Rejected six-lane 67.5 MHz follow-ups from the same pass:
 
 - Pass fence only: improved Fmax from 60.149 MHz to 63.307 MHz, but still failed
   setup with 128 endpoints and TNS -48.259.
-- Pass fence plus registered round constant: closed timing at 67.505 MHz and
-  reduced logic to 90%, but hardware returned 20/20 invalid quick21 nonces.
+- Pass fence plus registered round constant: the invalid-K behavior was fixed
+  and strict cocotb passes 7/7 at the normal 65-cycle cadence, but the corrected
+  local-K build no longer closes setup at 67.5 MHz; latest Fmax is 64.099 MHz.
 - Pass fence plus `SPINAL_CSA_ROUND=1`: failed Gowin synthesis resource limits
   with 23995 logic cells requested for a 20736-cell device.
-- Pass fence plus `SPINAL_SHARED_K=0`: failed routing with 1027 unrouted nets.
+- Shared K: no longer selected; local K is the current default so K fanout is
+  local to each compressor.
+
+Rejected six-lane 81 MHz follow-ups from the 20% push:
+
+- Local K, pass fence, minimized reset, CSA-lite: strict RTL passes at a
+  65-cycle cadence, but Gowin synthesis exceeds 20K resources with 20954 logic
+  cells requested for a 20736-cell device.
+- Shared K, pass fence, minimized reset, CSA-lite, `GOWIN_ROUTE_MAXFAN=12`:
+  strict RTL passes 7/7 and Gowin closes at 81.015 MHz with 20299/20736 logic,
+  11759/15750 registers, and 10283/10368 CLS. Hardware validation failed
+  `quick21 --count 100 --require-target` with 43 false positives, so this is
+  not a selected image despite meeting the modeled `6 * 81 / 65 = 7.477 MH/s`
+  target.
+- Host-round-skip plus shared K and CSA-lite: strict RTL reports the expected
+  62-cycle cadence and modeled `6 * 81 / 62 = 7.839 MH/s`, but normal routing
+  leaves 749 unrouted nets and route option 0 misses timing at 73.456 MHz Fmax.
+
+Rejected seven-lane 67.5 MHz follow-ups from the 20% push:
+
+- Host-round-skip plus shared K, pass fence, minimized reset, and
+  `GOWIN_ROUTE_MAXFAN=12`: normal routing leaves 1617 unrouted nets; route
+  option 0 completes but misses timing at 54.002 MHz Fmax.
+- Host-round-skip plus shared K and CSA-lite: strict RTL reports the expected
+  62-cycle cadence and modeled `7 * 67.5 / 62 = 7.621 MH/s`, but synthesis
+  exceeds the 20K with 23587 logic cells requested.
+- Full-path local K at 84 MHz with first-pass feed-forward fence and
+  `GOWIN_ROUTE_MAXFAN=12`: routes at 77.106 MHz Fmax, essentially unchanged
+  from the earlier 77.155 MHz run and still below the 84 MHz target.
 
 Promotion gate for either option:
 
 ```sh
 python scripts/tools/serial_smoke.py --target quick21 --count 100 --require-target <uart>
-python scripts/tools/serial_smoke.py --target quick14 --count 20 --require-target <uart>
-python scripts/tools/serial_smoke.py --target quick23 --count 20 --require-target <uart>
 ```
 
-Any false positive invalidates the candidate regardless of static timing.
+Additional spot-check targets must match the configured hardware candidate
+filter. The selected default uses `SPINAL_FIXED_CANDIDATE=2`, so it is a quick21
+filter image; a stricter `quick23` host target is only valid for a build whose
+hardware filter is also configured for quick23 or stricter. Any false positive
+under the intended filter invalidates the candidate regardless of static timing.
 
 ## 2026-05-26 Hardware Progress
 
@@ -150,7 +300,7 @@ hashes on hardware.
 | 5 lanes, 58.5 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 119.88 MHz; utilization 72% LUT4 / 61% DFF / 20% ALU | 37/50 strict quick21 valid; 13 false positives. Invalidated. | `build/hw-prod5-58m5-nowidelut-seed13` |
 | 5 lanes, 60.75 MHz, seed 13, `synth_gowin -nowidelut` | Failed legal placement at 72% LUT4 / 61% DFF / 20% ALU; direct seed 4 was stopped after spending several minutes in legalisation with no progress. | Not flashed; no bitstream | `build/attempt-logs/prod5-60m75-nowidelut-seed13.log`, `build/seed-sweep-prod5-60m75-nowidelut/seed4` |
 | 5 lanes, 67.5 MHz, seed 13, `synth_gowin -nowidelut` | Pass, 102.29 MHz; placement reported 67.40 MHz before routing; utilization 72% LUT4 / 61% DFF / 20% ALU | 0/50 strict quick21 valid; 50 false positives. Invalidated. | `build/hw-prod5-67m5-nowidelut-seed13` |
-| 6 lanes, 67.5 MHz, official Gowin, pass-output fence + minimized SHA reset fanout | Pass, 67.682 MHz; utilization 77% logic / 74% register / 88% CLS | 100/100 strict quick21 and 20/20 quick14 valid; current default, SRAM-loaded and mining | `build/gowin/tangminer_gowin_tangnano20k_lanes6_67m5_regpass1_minreset1` |
+| 6 lanes, 67.5 MHz, official Gowin, local K, pass-output fence + minimized SHA reset fanout | Pass, 68.525 MHz in the 2026-07-08 rerun; utilization 82% logic / 75% register / 92% CLS in the earlier run | 100/100 strict quick21 valid, plus 20/20 quick14 valid; current default with `TNC` nonce-attempt counter | `build/sweep_localK_regpass_minreset/lanes6_67m5_regpass1_minreset1_localK` |
 | 6 lanes, 54 MHz, seed 13, `synth_gowin -nowidelut` | Failed legal placement at 86% LUT4 / 72% DFF / 24% ALU | Not flashed; no bitstream | `build/attempt-logs/prod6-54m-nowidelut-seed13.log` |
 | 2 lanes, 27 MHz, no PLL, seed 13 | Pass, 121.20 MHz | 5/5 valid | `build/hw-verify-prod2-27m-seed13` |
 
@@ -238,6 +388,7 @@ SPINAL_CLOCK_PROFILE=67m5
 SPINAL_ENABLE_ECHO=0
 SPINAL_ENABLE_HARDCODED=0
 SPINAL_FIXED_CANDIDATE=2
+SPINAL_SHARED_K=0
 SPINAL_REGISTER_PASS_OUTPUTS=1
 SPINAL_MINIMIZE_SHA_RESET=1
 SPINAL_ROUND_SKIP=0
@@ -245,9 +396,10 @@ SPINAL_CSA_ROUND=0
 ```
 
 It models at `6.231 MH/s`. The relevant hardware evidence is the
-`build/gowin/tangminer_gowin_tangnano20k_lanes6_67m5_regpass1_minreset1` image,
-which closed at 67.682 MHz and passed 100/100 strict `quick21` plus 20/20
-`quick14` host nonce validation. The older
+`build/sweep_localK_regpass_minreset/lanes6_67m5_regpass1_minreset1_localK`
+image. A 2026-07-08 SRAM-loaded rerun closed at 68.525 MHz with 0 setup/hold
+violations and passed 100/100 strict `quick21` host nonce validation on
+`/dev/ttyUSB1`, with `TNC` nonce-attempt counter reads after each job. The older
 `build/hw-prod5-54m-nowidelut-seed13` image remains the open-source fallback.
 Higher-frequency 5-lane static candidates remain historical data only because
 hardware validation invalidated them with false positives.
@@ -424,7 +576,7 @@ Observed impact:
 | 2 production lanes at 67.5 MHz | Hardware-proven lower-clock control | `2x67.5` passes 50/50 strict quick21 host verification and models at 2.109 MH/s. |
 | 3/4 production lanes at 54 MHz | Hardware-proven lane scaling | `3x54` and `4x54` both pass 50/50 strict quick21 host verification. `4x54` models at 3.375 MH/s. |
 | 5 production lanes at 54 MHz with `synth_gowin -nowidelut` | Hardware-proven open-source point | `5x54` passes 50/50 and 100/100 strict quick21 host verification and models at 4.219 MH/s. |
-| 6 official-Gowin lanes at 67.5 MHz with pass fence + minimized SHA reset | Hardware-proven current best | Closes at 67.682 MHz, passes 100/100 quick21 and 20/20 quick14, and models at 6.231 MH/s. |
+| 6 official-Gowin lanes at 67.5 MHz with local K, pass fence + minimized SHA reset | Hardware-proven current best | Closes at 68.525 MHz in the 2026-07-08 rerun, passes 100/100 quick21 with `TNC` available, and models at 6.231 MH/s. |
 | 5 production lanes above 54 MHz with `synth_gowin -nowidelut` | Invalidated by hardware | `5x57` and `5x58.5` route cleanly but return false positives; `5x67.5` returns 50/50 false positives. `5x60.75` did not legally place with the tried seeds. |
 | 6 production lanes at 54 MHz with `synth_gowin -nowidelut` | Does not place | Area reaches 86% LUT4 / 72% DFF / 24% ALU and nextpnr cannot find a legal placement at seed 13. |
 | 2 production lanes at 81 MHz | Invalidated by stricter hardware check | Earlier short runs passed, but a 50-job strict retest found 3 false positives. Do not use as a verified point. |
@@ -436,11 +588,11 @@ Observed impact:
 | Global `synth_gowin -noflatten` | Tried, not usable directly | Preserves hierarchy but produces JSON that nextpnr rejects during I/O packing in this flow. |
 | Selective/staged hierarchy preservation | Tried, not helpful | A custom top-only IO-pad flow reaches nextpnr, but area rises to 79% LUT4/70% DFF and placement fails. |
 | SRAM/distributed schedule taps | Useful for DFF pressure, costly for LUTs | 4x111 passes at 122.13 MHz and cuts DFF to 42%, but LUT4 rises to 87%. |
-| 61-cycle round skip | Active but unvalidated | Integrated as `SPINAL_ROUND_SKIP=1`; with the default pass fence it would model `6x67.5` at 6.532 MH/s, but the latest 5-lane 54 MHz `-nowidelut` seed-13 round-skip run failed legal placement at 76% LUT4 / 65% DFF / 22% ALU. It must place and pass strict quick21 plus quick14/23 hardware checks before use. |
+| 61-cycle round skip | Active but unvalidated | Integrated as `SPINAL_ROUND_SKIP=1`; with the default pass fence it would model `6x67.5` at 6.532 MH/s, but the latest 5-lane 54 MHz `-nowidelut` seed-13 round-skip run failed legal placement at 76% LUT4 / 65% DFF / 22% ALU. It must place and pass strict quick21 hardware checks before use. |
 | Carry-save one-cycle round | Active but unvalidated | Integrated as `SPINAL_CSA_ROUND=1`; intended for 57 MHz and higher sweeps after round-skip correctness is established. |
 | Wider local pairs, 1x4 or 2x2 | Tried, not helpful so far | Worse Fmax and lower best passing rate than baseline. |
 | Simple timing fences/synchronizers | Tried, not helpful | Top-level digest staging and registered compressor-output `done` both passed simulation but worsened hardware validity around the then-promising 2x81 point. |
-| `SPINAL_SHARED_K=0` | Tried, not helpful at 90 MHz | Removes shared round-constant fanout, but `2x90` still returned 10/10 invalid candidates. |
+| Local K constants, `SPINAL_SHARED_K=0` | Current default at 67.5 MHz; not sufficient by itself at high clock | Removes shared round-constant fanout and is used by the selected 6-lane image. Historical `2x90` local-K checks still returned 10/10 invalid candidates. |
 | Lane start staggering | Tried, not helpful at 90 MHz | `SPINAL_LANE_START_STAGGER=16` keeps lanes out of exact start-cycle phase, but `2x90` still returned 10/10 invalid candidates. |
 | `synth_gowin -noalu` | Tried, not viable at 90 MHz | Avoids Gowin ALU carry-chain mapping, but the two-lane 90 MHz build only placed to about 65 MHz. |
 | Plain 5 lanes | Tried, not helpful | Fails placement at 90 MHz and above without production trimming; `-nowidelut`, `-retime`, `-noabc9`, and `-nodffe` did not recover it. |

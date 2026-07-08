@@ -57,6 +57,15 @@ def read_response(ser, response_len):
     return response
 
 
+def read_counter(ser):
+    ser.write(b"TNC")
+    ser.flush()
+    response = read_response(ser, 9)
+    if len(response) == 9 and response[:1] == b"C":
+        return int.from_bytes(response[1:9], "big")
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("ports", nargs="*", help="serial ports to try")
@@ -68,6 +77,7 @@ def main():
         help="target hex or alias: all-ones, quick3, quick14, quick21, quick23, quick26.",
     )
     parser.add_argument("--echo", action="store_true", help="ask FPGA to echo the parsed job instead of hashing")
+    parser.add_argument("--counter", action="store_true", help="query and print the FPGA nonce-attempt counter")
     parser.add_argument("--hardcoded", action="store_true", help="ask FPGA to run its built-in genesis nonce-zero job")
     parser.add_argument("--count", type=int, default=1, help="number of hash jobs to run; use 0 to run until interrupted")
     parser.add_argument("--watch", action="store_true", help="keep sending fresh smoke jobs and printing candidates")
@@ -91,6 +101,14 @@ def main():
                 time.sleep(0.1)
                 ser.reset_input_buffer()
                 ser.reset_output_buffer()
+
+                if args.counter:
+                    count = read_counter(ser)
+                    if count is None:
+                        print(f"{port}: COUNTER no valid response")
+                        continue
+                    print(f"{port}: COUNTER nonce_attempts={count}")
+                    return
 
                 if args.echo:
                     packet = make_packet(GENESIS_HEADER, target, b"E")
@@ -125,6 +143,7 @@ def main():
                             break
 
                         nonce = int.from_bytes(response[1:5], "big")
+                        attempts = read_counter(ser)
                         digest = bitcoin_hash_for_nonce(header, nonce)
                         candidate_difficulty = share_difficulty(digest)
                         requested_difficulty = target_difficulty(validation_target)
@@ -133,6 +152,7 @@ def main():
                             target_failures += 1
                         print(
                             f"{port}: job={job_index} FOUND nonce=0x{nonce:08x} "
+                            f"nonce_attempts={attempts if attempts is not None else 'unknown'} "
                             f"host_hash={digest.hex()} "
                             f"share_difficulty={format_difficulty_units(candidate_difficulty)} "
                             f"target_difficulty={format_difficulty_units(requested_difficulty)} "

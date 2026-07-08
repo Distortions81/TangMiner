@@ -97,6 +97,27 @@ The FPGA does not return the hash. Host software must rebuild the 80-byte
 header, copy the nonce bytes into header bytes `76..79`, double-hash the header,
 and compare the resulting proof-of-work integer against the actual share target.
 
+## Nonce-Attempt Counter
+
+Host to FPGA:
+
+```text
+"T" "N" "C"
+```
+
+FPGA to host:
+
+```text
+"C"
+nonce_attempts[8]
+```
+
+Total response length: `9` bytes. `nonce_attempts` is an unsigned 64-bit
+big-endian count of nonce attempts launched into the first SHA pass across all
+lanes. The counter resets on FPGA reset and when a new `TNJ` or `TNH` job starts.
+The response is a snapshot taken when the command is parsed, so host software can
+use it to disambiguate hardware hashrate measurements from candidate frequency.
+
 ## Echo Job
 
 Host to FPGA:

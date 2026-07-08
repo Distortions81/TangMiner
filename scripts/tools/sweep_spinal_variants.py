@@ -98,14 +98,28 @@ def lane_period_cycles(args):
     round_skip = truthy(make_var_value(args, "SPINAL_ROUND_SKIP", "0"))
     two_cycle = truthy(make_var_value(args, "SPINAL_TWO_CYCLE_ROUND", "0"))
     three_cycle = truthy(make_var_value(args, "SPINAL_THREE_CYCLE_ROUND", "0"))
+    two_rounds = truthy(make_var_value(args, "SPINAL_TWO_ROUNDS_PER_CYCLE", "0"))
+    two_round_pipeline = truthy(make_var_value(args, "SPINAL_TWO_ROUND_PIPELINE", "0"))
+    two_phase_pipeline = truthy(make_var_value(args, "SPINAL_TWO_PHASE_ROUND_PIPELINE", "0"))
     pass_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_PASS_OUTPUTS", "0"))
     compressor_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_COMPRESSOR_OUTPUTS",
                                                make_var_value(args, "SPINAL_REGISTER_COMPRESS_OUTPUTS", "0")))
+    first_pass_feedforward = truthy(make_var_value(args, "SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD", "0"))
 
-    base = 61 if round_skip else 64
+    base_rounds = 61 if round_skip else 64
+    if two_phase_pipeline:
+        base = base_rounds
+    elif two_round_pipeline:
+        base = (base_rounds + 1) // 2 + 1
+    elif two_rounds:
+        base = (base_rounds + 1) // 2
+    else:
+        base = base_rounds
     multiplier = 3 if three_cycle else 2 if two_cycle else 1
-    extra = 1 if pass_outputs else 0
+    extra = 0 if two_round_pipeline or two_phase_pipeline else ((1 if multiplier == 1 else 2) if pass_outputs else 0)
     if multiplier == 1 and compressor_outputs:
+        extra += 1
+    if multiplier == 1 and first_pass_feedforward:
         extra += 1
     return base * multiplier + extra
 
@@ -113,20 +127,59 @@ def lane_period_cycles(args):
 def build_variant(args, lanes, profile):
     clock_mhz = PROFILE_CLOCK_MHZ[profile]
     round_skip = truthy(make_var_value(args, "SPINAL_ROUND_SKIP", "0"))
+    host_round_skip = truthy(make_var_value(args, "SPINAL_HOST_ROUND_SKIP", "0"))
     csa_round = truthy(make_var_value(args, "SPINAL_CSA_ROUND", "0"))
+    csa_schedule = truthy(make_var_value(args, "SPINAL_CSA_SCHEDULE", "0"))
+    balanced_round_adder = truthy(make_var_value(args, "SPINAL_BALANCED_ROUND_ADDER", "0"))
+    share_job_state = truthy(make_var_value(args, "SPINAL_SHARE_JOB_STATE", "0"))
+    register_round_constant = truthy(make_var_value(args, "SPINAL_REGISTER_ROUND_CONSTANT", "0"))
+    minimize_sha_reset = truthy(make_var_value(args, "SPINAL_MINIMIZE_SHA_RESET", "0"))
+    local_k = not truthy(make_var_value(args, "SPINAL_SHARED_K", "0"))
+    two_cycle = truthy(make_var_value(args, "SPINAL_TWO_CYCLE_ROUND", "0"))
+    three_cycle = truthy(make_var_value(args, "SPINAL_THREE_CYCLE_ROUND", "0"))
+    two_rounds = truthy(make_var_value(args, "SPINAL_TWO_ROUNDS_PER_CYCLE", "0"))
+    two_round_pipeline = truthy(make_var_value(args, "SPINAL_TWO_ROUND_PIPELINE", "0"))
+    two_phase_pipeline = truthy(make_var_value(args, "SPINAL_TWO_PHASE_ROUND_PIPELINE", "0"))
     pass_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_PASS_OUTPUTS", "0"))
     compressor_outputs = truthy(make_var_value(args, "SPINAL_REGISTER_COMPRESSOR_OUTPUTS",
                                                make_var_value(args, "SPINAL_REGISTER_COMPRESS_OUTPUTS", "0")))
+    first_pass_feedforward = truthy(make_var_value(args, "SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD", "0"))
     lane_period = lane_period_cycles(args)
     suffix = ""
     if round_skip:
         suffix += "_skip1"
+    if host_round_skip:
+        suffix += "_hostskip1"
+    if two_cycle:
+        suffix += "_2cyc1"
+    if three_cycle:
+        suffix += "_3cyc1"
+    if two_rounds:
+        suffix += "_2round1"
+    if two_round_pipeline:
+        suffix += "_2rpipe1"
+    if two_phase_pipeline:
+        suffix += "_2phasepipe1"
     if csa_round:
         suffix += "_csa1"
+    if csa_schedule:
+        suffix += "_csasch1"
+    if balanced_round_adder:
+        suffix += "_baladd1"
+    if share_job_state:
+        suffix += "_sharejob1"
     if pass_outputs:
         suffix += "_regpass1"
     if compressor_outputs:
         suffix += "_regcomp1"
+    if first_pass_feedforward:
+        suffix += "_regff1"
+    if register_round_constant:
+        suffix += "_regk1"
+    if minimize_sha_reset:
+        suffix += "_minreset1"
+    if local_k:
+        suffix += "_localK"
     variant = f"lanes{lanes}_{profile}{suffix}"
     build_dir = REPO_ROOT / args.build_root / variant
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -225,6 +278,8 @@ def build_variant(args, lanes, profile):
 
     stdout_text = "".join(output_lines)
     parse_build_log(result, stdout_text)
+    parse_artifact_reports(result, build_dir)
+    update_selected_ok(result)
     if result.returncode != 0 and not result.failure_reason:
         result.failure_reason = classify_failure(stdout_text)
     return result
@@ -256,8 +311,10 @@ def should_print_progress(line):
 
 
 def classify_failure(text):
-    if "Unable to find legal placement" in text:
+    if "Unable to find legal placement" in text or "Failed to place" in text:
         return "placement"
+    if "exceeds the resource limit" in text or re.search(r"\bexceeds\s+\d+", text):
+        return "resources"
     if "timed out" in text:
         return "timeout"
     if "failed to route" in text.lower() or "Routing failed" in text:
@@ -265,6 +322,63 @@ def classify_failure(text):
     if "ERROR:" in text:
         return "error"
     return "failed"
+
+
+def parse_artifact_reports(result, build_dir):
+    timing_reports = sorted(build_dir.glob("gowin/**/impl/pnr/*.tr"))
+    if timing_reports:
+        parse_gowin_timing_report(result, timing_reports[-1].read_text(encoding="utf-8", errors="replace"))
+
+    pnr_reports = sorted(build_dir.glob("gowin/**/impl/pnr/*.rpt.txt"))
+    if pnr_reports:
+        parse_gowin_pnr_report(result, pnr_reports[-1].read_text(encoding="utf-8", errors="replace"))
+
+
+def parse_gowin_timing_report(result, text):
+    setup = re.search(r"<Numbers of Setup Violated Endpoints>:(\d+)", text)
+    hold = re.search(r"<Numbers of Hold Violated Endpoints>:(\d+)", text)
+    clock_rows = re.findall(
+        r"^\s*\d+\s+([A-Za-z_][A-Za-z0-9_]*)\s+([0-9.]+)\(MHz\)\s+([0-9.]+)\(MHz\)",
+        text,
+        flags=re.MULTILINE,
+    )
+
+    setup_count = int(setup.group(1)) if setup else 0
+    hold_count = int(hold.group(1)) if hold else 0
+    system_rows = [row for row in clock_rows if row[0] == "systemClock"]
+    if system_rows:
+        _, requested, fmax = system_rows[-1]
+        result.requested_mhz = float(requested)
+        result.fmax_mhz = float(fmax)
+        if result.requested_mhz > 0:
+            result.margin_percent = (result.fmax_mhz / result.requested_mhz - 1.0) * 100.0
+        result.timing_status = (
+            "PASS"
+            if setup_count == 0 and hold_count == 0 and result.fmax_mhz + 0.001 >= result.requested_mhz
+            else "FAIL"
+        )
+        if result.timing_status == "FAIL" and not result.failure_reason:
+            result.failure_reason = "timing"
+
+
+def parse_elapsed_hms(value):
+    match = re.search(r"(\d+)h\s+(\d+)m\s+([0-9.]+)s", value)
+    if not match:
+        return 0.0
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600.0 + int(minutes) * 60.0 + float(seconds)
+
+
+def parse_gowin_pnr_report(result, text):
+    logic = re.search(r"^\s*Logic\s+\|\s+\d+/\d+\s+\|\s+(\d+)%", text, flags=re.MULTILINE)
+    register = re.search(r"^\s*Register\s+\|\s+\d+/\d+\s+\|\s+(\d+)%", text, flags=re.MULTILINE)
+    routing = re.search(r"Total Routing:.*?Elapsed time = ([^\n]+)", text)
+    if logic:
+        result.lut4_percent = int(logic.group(1))
+    if register:
+        result.dff_percent = int(register.group(1))
+    if routing:
+        result.route_time_seconds = parse_elapsed_hms(routing.group(1))
 
 
 def parse_build_log(result, text):
@@ -297,6 +411,7 @@ def parse_build_log(result, text):
     if route_times:
         result.route_time_seconds = float(route_times[-1])
 
+def update_selected_ok(result):
     result.selected_ok = (
         result.returncode == 0
         and result.timing_status == "PASS"

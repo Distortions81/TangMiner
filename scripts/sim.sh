@@ -70,10 +70,13 @@ import os
 def truthy(name):
     return os.environ.get(name, "0").strip().lower() in ("1", "true", "yes", "on")
 
-base = 61 if truthy("SPINAL_ROUND_SKIP") else 64
+base_rounds = 61 if truthy("SPINAL_ROUND_SKIP") else 64
+base = (base_rounds + 1) // 2 if truthy("SPINAL_TWO_ROUNDS_PER_CYCLE") else base_rounds
 mult = 3 if truthy("SPINAL_THREE_CYCLE_ROUND") else 2 if truthy("SPINAL_TWO_CYCLE_ROUND") else 1
-extra = 1 if truthy("SPINAL_REGISTER_PASS_OUTPUTS") else 0
+extra = (1 if mult == 1 else 2) if truthy("SPINAL_REGISTER_PASS_OUTPUTS") else 0
 if mult == 1 and (truthy("SPINAL_REGISTER_COMPRESSOR_OUTPUTS") or truthy("SPINAL_REGISTER_COMPRESS_OUTPUTS")):
+    extra += 1
+if mult == 1 and truthy("SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD"):
     extra += 1
 print(base * mult + extra)
 PY

@@ -20,6 +20,7 @@ from typing import Optional, TextIO
 from make_job import (
     ALL_ONES_TARGET,
     IV,
+    K,
     QUICK3_TARGET,
     QUICK14_TARGET,
     QUICK21_TARGET,
@@ -30,6 +31,7 @@ from make_job import (
     pow_hash_value,
     share_difficulty,
     target_difficulty,
+    rotr,
     words_to_bytes,
 )
 
@@ -72,6 +74,70 @@ def build_job_from_header(header: bytes, target: bytes) -> Job:
 
 def encode_job_payload(job: Job) -> bytes:
     return job.midstate + job.tail + job.target
+
+
+def _small_sigma0(value: int) -> int:
+    return (rotr(value, 7) ^ rotr(value, 18) ^ (value >> 3)) & 0xFFFFFFFF
+
+
+def _small_sigma1(value: int) -> int:
+    return (rotr(value, 17) ^ rotr(value, 19) ^ (value >> 10)) & 0xFFFFFFFF
+
+
+def _big_sigma0(value: int) -> int:
+    return (rotr(value, 2) ^ rotr(value, 13) ^ rotr(value, 22)) & 0xFFFFFFFF
+
+
+def _big_sigma1(value: int) -> int:
+    return (rotr(value, 6) ^ rotr(value, 11) ^ rotr(value, 25)) & 0xFFFFFFFF
+
+
+def _ch(x: int, y: int, z: int) -> int:
+    return ((x & y) ^ (~x & z)) & 0xFFFFFFFF
+
+
+def _maj(x: int, y: int, z: int) -> int:
+    return ((x & y) ^ (x & z) ^ (y & z)) & 0xFFFFFFFF
+
+
+def round_skip_payload_fields(job: Job) -> tuple[bytes, bytes, bytes, bytes]:
+    """Return tail2, w16, w17, and raw round-0..2 prefix state for FPGA round-skip mode."""
+    tail0 = int.from_bytes(job.tail[0:4], "big")
+    tail1 = int.from_bytes(job.tail[4:8], "big")
+    tail2 = int.from_bytes(job.tail[8:12], "big")
+    first_length = 80 * 8
+    w16 = (_small_sigma0(tail1) + tail0) & 0xFFFFFFFF
+    w17 = (_small_sigma1(first_length) + _small_sigma0(tail2) + tail1) & 0xFFFFFFFF
+
+    a, b, c, d, e, f, g, h = (
+        int.from_bytes(job.midstate[i:i + 4], "big")
+        for i in range(0, 32, 4)
+    )
+    for word, k_word in zip((tail0, tail1, tail2), K[:3]):
+        t1 = (h + _big_sigma1(e) + _ch(e, f, g) + k_word + word) & 0xFFFFFFFF
+        t2 = (_big_sigma0(a) + _maj(a, b, c)) & 0xFFFFFFFF
+        h, g, f, e, d, c, b, a = (
+            g,
+            f,
+            e,
+            (d + t1) & 0xFFFFFFFF,
+            c,
+            b,
+            a,
+            (t1 + t2) & 0xFFFFFFFF,
+        )
+
+    return (
+        tail2.to_bytes(4, "big"),
+        w16.to_bytes(4, "big"),
+        w17.to_bytes(4, "big"),
+        words_to_bytes((a, b, c, d, e, f, g, h)),
+    )
+
+
+def encode_host_round_skip_payload(job: Job) -> bytes:
+    tail2, w16, w17, prefix_state = round_skip_payload_fields(job)
+    return job.midstate + tail2 + w16 + w17 + prefix_state
 
 
 def decode_job_payload(payload: bytes) -> Job:
@@ -161,6 +227,7 @@ class TangMinerEmulator:
         self._rx_state = "sync0"
         self._command = 0
         self._payload = bytearray()
+        self._nonce_attempts = 0
 
     def feed(self, data: bytes) -> bytes:
         output = bytearray()
@@ -186,6 +253,9 @@ class TangMinerEmulator:
             if byte == ord("S"):
                 self._rx_state = "sync0"
                 return b""
+            if byte == ord("C"):
+                self._rx_state = "sync0"
+                return b"C" + self._nonce_attempts.to_bytes(8, "big")
             if byte == ord("H"):
                 self._rx_state = "sync0"
                 return self._run_job(build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET))
@@ -218,9 +288,11 @@ class TangMinerEmulator:
         started = time.monotonic()
         last_report = started
         last_report_scanned = 0
+        self._nonce_attempts = 0
         for nonce in range(limit):
             digest = bitcoin_hash(job, nonce)
             scanned = nonce + 1
+            self._nonce_attempts = scanned
             now = time.monotonic()
             if self.stats_interval and now - last_report >= self.stats_interval:
                 self._report_stats("progress", scanned, started, now, last_report_scanned, last_report)

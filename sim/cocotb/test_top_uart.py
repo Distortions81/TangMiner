@@ -10,8 +10,12 @@ from tangminer_emulator import (
     GENESIS_HEADER,
     QUICK3_TARGET,
     QUICK14_TARGET,
+    QUICK21_TARGET,
+    QUICK23_TARGET,
+    QUICK26_TARGET,
     bitcoin_hash,
     build_job_from_header,
+    encode_host_round_skip_payload,
     encode_job_payload,
     format_rate,
     meets_target,
@@ -24,6 +28,34 @@ CLKS_PER_BIT = int(os.environ.get("CLKS_PER_BIT", "8"))
 HARDWARE_CLOCK_HZ = int(os.environ.get("HARDWARE_CLOCK_HZ", "67500000"))
 LANE_COUNT = int(os.environ.get("LANE_COUNT", "6"))
 EXPECTED_LANE_PERIOD_CYCLES = int(os.environ.get("EXPECTED_LANE_PERIOD_CYCLES", "65"))
+HOST_ROUND_SKIP_PAYLOAD = os.environ.get("HOST_ROUND_SKIP_PAYLOAD", "0").lower() in ("1", "true", "yes", "on")
+FIXED_CANDIDATE_MODE = os.environ.get("FIXED_CANDIDATE_MODE", "")
+STRICT_NONCE_CHECKS = os.environ.get("STRICT_NONCE_CHECKS", "0").lower() in ("1", "true", "yes", "on")
+
+
+def _encode_payload(job):
+    if HOST_ROUND_SKIP_PAYLOAD:
+        return encode_host_round_skip_payload(job)
+    return encode_job_payload(job)
+
+
+HOST_FIXED_CANDIDATES = {
+    "0": (ALL_ONES_TARGET, 0),
+    "1": (QUICK3_TARGET, 3),
+    "2": (QUICK21_TARGET, 213373),
+    "3": (QUICK23_TARGET, 7651038),
+    "4": (QUICK26_TARGET, 26309569),
+    "5": (QUICK14_TARGET, 34368),
+}
+
+
+def _host_fixed_candidate():
+    try:
+        return HOST_FIXED_CANDIDATES[FIXED_CANDIDATE_MODE]
+    except KeyError as exc:
+        raise AssertionError(
+            "HOST_ROUND_SKIP_PAYLOAD tests require FIXED_CANDIDATE_MODE in 0..5"
+        ) from exc
 
 
 def _clock(signal, period, unit):
@@ -90,6 +122,13 @@ async def _uart_read(dut, length, max_cycles=20_000):
     return bytes([first] + rest)
 
 
+async def _read_counter(dut):
+    await _uart_write(dut, b"TNC")
+    response = await _uart_read(dut, 9)
+    assert response[:1] == b"C"
+    return int.from_bytes(response[1:9], "big")
+
+
 def _resolve_signal(dut, *names):
     for name in names:
         try:
@@ -126,7 +165,7 @@ async def top_echoes_job_payload(dut):
     await _start_clock(dut)
 
     job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
-    payload = encode_job_payload(job)
+    payload = _encode_payload(job)
 
     await _uart_write(dut, b"TNE" + payload)
 
@@ -139,25 +178,38 @@ async def top_hashes_genesis_nonce_zero(dut):
     await _start_clock(dut)
 
     job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
-    payload = encode_job_payload(job)
+    payload = _encode_payload(job)
 
     await _uart_write(dut, b"TNJ" + payload)
 
-    response = await _uart_read(dut, 5)
+    expected_nonce = 0
+    expected_target = ALL_ONES_TARGET
+    max_cycles = 20_000
+    if HOST_ROUND_SKIP_PAYLOAD:
+        expected_target, expected_nonce = _host_fixed_candidate()
+        expected_lane_period = EXPECTED_LANE_PERIOD_CYCLES or 64
+        max_cycles = max(
+            600_000,
+            int((expected_nonce + LANE_COUNT) * expected_lane_period / LANE_COUNT) + 100_000,
+        )
+
+    response = await _uart_read(dut, 5, max_cycles=max_cycles)
     assert response[:1] == b"F"
-    assert response[1:5] == b"\x00\x00\x00\x00"
-    assert bitcoin_hash(job, 0) == GENESIS_EXPECTED_HASH_NONCE_ZERO
-    assert meets_target(GENESIS_EXPECTED_HASH_NONCE_ZERO, ALL_ONES_TARGET)
+    assert response[1:5] == expected_nonce.to_bytes(4, "big")
+    expected_hash = bitcoin_hash(job, expected_nonce)
+    if expected_nonce == 0:
+        assert expected_hash == GENESIS_EXPECTED_HASH_NONCE_ZERO
+    assert meets_target(expected_hash, expected_target)
 
 
-@cocotb.test()
+@cocotb.test(skip=HOST_ROUND_SKIP_PAYLOAD)
 async def top_hashes_genesis_nonce_three(dut):
     await _start_clock(dut)
 
     all_ones_job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
     expected_hash = bitcoin_hash(all_ones_job, 3)
     job = build_job_from_header(GENESIS_HEADER, QUICK3_TARGET)
-    payload = encode_job_payload(job)
+    payload = _encode_payload(job)
 
     await _uart_write(dut, b"TNJ" + payload)
 
@@ -168,14 +220,14 @@ async def top_hashes_genesis_nonce_three(dut):
     assert share_difficulty(expected_hash) >= target_difficulty(QUICK3_TARGET)
 
 
-@cocotb.test()
+@cocotb.test(skip=HOST_ROUND_SKIP_PAYLOAD)
 async def top_hashes_genesis_nonce_quick14(dut):
     await _start_clock(dut)
 
     all_ones_job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
     expected_hash = bitcoin_hash(all_ones_job, 34368)
     job = build_job_from_header(GENESIS_HEADER, QUICK14_TARGET)
-    payload = encode_job_payload(job)
+    payload = _encode_payload(job)
 
     await _uart_write(dut, b"TNJ" + payload)
 
@@ -191,6 +243,30 @@ async def top_hashes_genesis_nonce_quick14(dut):
     assert share_difficulty(expected_hash) >= target_difficulty(QUICK14_TARGET)
 
 
+@cocotb.test(skip=HOST_ROUND_SKIP_PAYLOAD or not STRICT_NONCE_CHECKS)
+async def top_hashes_genesis_nonce_quick21(dut):
+    await _start_clock(dut)
+
+    all_ones_job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
+    expected_nonce = 213373
+    expected_hash = bitcoin_hash(all_ones_job, expected_nonce)
+    job = build_job_from_header(GENESIS_HEADER, QUICK21_TARGET)
+    payload = _encode_payload(job)
+
+    await _uart_write(dut, b"TNJ" + payload)
+
+    expected_lane_period = EXPECTED_LANE_PERIOD_CYCLES or 64
+    quick21_wait_cycles = max(
+        3_000_000,
+        int((expected_nonce + LANE_COUNT) * expected_lane_period / LANE_COUNT) + 300_000,
+    )
+    response = await _uart_read(dut, 5, max_cycles=quick21_wait_cycles)
+    assert response[:1] == b"F"
+    assert response[1:5] == expected_nonce.to_bytes(4, "big")
+    assert meets_target(expected_hash, QUICK21_TARGET)
+    assert share_difficulty(expected_hash) >= target_difficulty(QUICK21_TARGET)
+
+
 @cocotb.test()
 async def top_reports_cycle_accurate_hashrate(dut):
     await _start_clock(dut)
@@ -203,7 +279,7 @@ async def top_reports_cycle_accurate_hashrate(dut):
         "coreArea_core_io_currentNonce",
     )
     job = build_job_from_header(GENESIS_HEADER, b"\x00" * 32)
-    payload = encode_job_payload(job)
+    payload = _encode_payload(job)
 
     await _uart_write(dut, b"TNJ" + payload)
 
@@ -227,12 +303,15 @@ async def top_reports_cycle_accurate_hashrate(dut):
         )
     cycles_per_nonce = lane_period_cycles / LANE_COUNT
     hashes_per_second = HARDWARE_CLOCK_HZ * LANE_COUNT / lane_period_cycles
+    attempts = await _read_counter(dut)
+    assert attempts >= LANE_COUNT * 4, f"counter too small after observed nonce progress: {attempts}"
     dut._log.info(
         "hashrate source=rtl_cycles "
         f"lane_count={LANE_COUNT} "
         f"lane_period_cycles={lane_period_cycles} "
         f"cycles_per_nonce={cycles_per_nonce:.3f} "
         f"clock_hz={HARDWARE_CLOCK_HZ} "
+        f"nonce_attempts={attempts} "
         f"rate={format_rate(hashes_per_second)} "
         f"rate_hps={hashes_per_second:.2f}"
     )
@@ -240,7 +319,7 @@ async def top_reports_cycle_accurate_hashrate(dut):
     await _uart_write(dut, b"TNS")
 
 
-@cocotb.test()
+@cocotb.test(skip=HOST_ROUND_SKIP_PAYLOAD)
 async def top_runs_hardcoded_job(dut):
     await _start_clock(dut)
 
