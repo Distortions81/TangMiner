@@ -14,6 +14,10 @@ software_difficulty="${SOFTWARE_SUGGEST_DIFFICULTY:-0.0000046566}"
 rtl_target="${RTL_FPGA_TARGET:-quick14}"
 rtl_difficulty="${RTL_SUGGEST_DIFFICULTY:-0.000001}"
 hardware_difficulty="${HARDWARE_SUGGEST_DIFFICULTY:-0.00646187}"
+hardware_clock_mhz="${HARDWARE_CLOCK_MHZ:-${SPINAL_CLOCK_MHZ:-54.000}}"
+hardware_lanes="${HARDWARE_LANES:-${SPINAL_LANES:-5}}"
+hardware_lane_period_cycles="${HARDWARE_LANE_PERIOD_CYCLES:-${SPINAL_LANE_PERIOD_CYCLES:-64}}"
+hardware_baseline_mhs="${HARDWARE_BASELINE_MHS:-4.21875}"
 max_nonces="${SOFTWARE_MAX_NONCES:-100000}"
 
 client="stratum/build/stratum-client"
@@ -52,8 +56,43 @@ environment overrides:
   SOFTWARE_FPGA_TARGET, SOFTWARE_SUGGEST_DIFFICULTY, SOFTWARE_MAX_NONCES
   RTL_FPGA_TARGET, RTL_SUGGEST_DIFFICULTY, RTL_BENCHMARK_SECONDS, RTL_TARGET_SHARES_PER_MINUTE
   HARDWARE_FPGA_TARGET, HARDWARE_SUGGEST_DIFFICULTY, SERIAL_PORT
+  HARDWARE_CLOCK_MHZ, HARDWARE_LANES, HARDWARE_LANE_PERIOD_CYCLES
   NO_SUBMIT=1, VERBOSE=1
 EOF
+}
+
+print_modeled_hashrate() {
+  local clock_mhz="$1"
+  local lanes="$2"
+  local lane_period_cycles="$3"
+  local baseline_mhs="$4"
+
+  if ! python3 - "$clock_mhz" "$lanes" "$lane_period_cycles" "$baseline_mhs" <<'PY'
+import sys
+
+clock_mhz = float(sys.argv[1])
+lanes = float(sys.argv[2])
+lane_period_cycles = float(sys.argv[3])
+baseline_mhs = float(sys.argv[4])
+
+rate_mhs = clock_mhz * lanes / lane_period_cycles
+uplift_pct = ((rate_mhs / baseline_mhs) - 1.0) * 100.0
+target_met = "yes" if uplift_pct >= 20.0 else "no"
+print(
+    "modeled_hashrate={:.3f}MH/s clock_mhz={:.3f} lanes={} "
+    "lane_period_cycles={:.0f} uplift_vs_5x54={:.1f}% target_20pct={}".format(
+        rate_mhs,
+        clock_mhz,
+        int(lanes),
+        lane_period_cycles,
+        uplift_pct,
+        target_met,
+    )
+)
+PY
+  then
+    echo "modeled_hashrate=unknown clock_mhz=$clock_mhz lanes=$lanes lane_period_cycles=$lane_period_cycles" >&2
+  fi
 }
 
 run_client() {
@@ -155,6 +194,7 @@ case "$mode" in
     fi
     echo "hardware_port=$serial_port"
     echo "hardware_target=$hardware_target suggested_difficulty=$hardware_difficulty"
+    print_modeled_hashrate "$hardware_clock_mhz" "$hardware_lanes" "$hardware_lane_period_cycles" "$hardware_baseline_mhs"
     run_client "$hardware_target" "$hardware_difficulty" "$serial_port"
     ;;
   *)

@@ -297,10 +297,10 @@ gowin-flash: gowin-build
 	$(OPENFPGALOADER) -b $(BOARD) -f $(GOWIN_FS)
 
 gowin-load-and-mine: gowin-load
-	scripts/mine-hardware.sh "$(SERIAL_PORT)"
+	HARDWARE_CLOCK_MHZ="$(SPINAL_CLOCK_MHZ)" HARDWARE_LANES="$(SPINAL_LANES)" HARDWARE_LANE_PERIOD_CYCLES="$(SPINAL_LANE_PERIOD_CYCLES)" scripts/mine-hardware.sh "$(SERIAL_PORT)"
 
 gowin-flash-and-mine: gowin-flash
-	scripts/mine-hardware.sh "$(SERIAL_PORT)"
+	HARDWARE_CLOCK_MHZ="$(SPINAL_CLOCK_MHZ)" HARDWARE_LANES="$(SPINAL_LANES)" HARDWARE_LANE_PERIOD_CYCLES="$(SPINAL_LANE_PERIOD_CYCLES)" scripts/mine-hardware.sh "$(SERIAL_PORT)"
 
 load: $(SPINAL_PREFIX).fs
 	$(OPENFPGALOADER) -b $(BOARD) $<
@@ -345,7 +345,7 @@ mine-rtl:
 	scripts/mine-rtl.sh
 
 mine-hardware:
-	scripts/mine-hardware.sh "$(SERIAL_PORT)"
+	HARDWARE_CLOCK_MHZ="$(SPINAL_CLOCK_MHZ)" HARDWARE_LANES="$(SPINAL_LANES)" HARDWARE_LANE_PERIOD_CYCLES="$(SPINAL_LANE_PERIOD_CYCLES)" scripts/mine-hardware.sh "$(SERIAL_PORT)"
 
 sweep-spinal:
 	$(PYTHON) scripts/tools/sweep_spinal_variants.py $(SWEEP_ARGS)
