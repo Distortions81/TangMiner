@@ -2,10 +2,10 @@
 
 ![TangMiner board](tangminer.png)
 
-TangMiner is an experimental Bitcoin hash engine for Sipeed Tang Nano FPGA
-boards. The FPGA scans nonce ranges and reports candidates over USB-UART; the
-host Stratum client handles pool work, full double-SHA256 validation, target
-checks, and share submission.
+TangMiner is an experimental Bitcoin hash engine for Sipeed Tang Nano and Tang
+Mega FPGA boards. The FPGA scans nonce ranges and reports candidates over
+USB-UART; the host Stratum client handles pool work, full double-SHA256
+validation, target checks, and share submission.
 
 This is a learning and integration project, not an economically useful miner.
 
@@ -151,6 +151,24 @@ The Gowin flow auto-detects `local/gowin-eda`, `../MIPS-FPGA/local/gowin-eda`,
 `../TMS9900-FPGA/local/gowin-eda`, and `../FocusTerm/local/gowin-eda`. Set
 `GOWIN_SH=/path/to/gw_sh` if Gowin is installed elsewhere.
 
+Build the Tang Mega 138K target with Official Gowin EDA:
+
+```sh
+make build TARGET=tangmega138k
+make gowin-fmax TARGET=tangmega138k
+```
+
+Load it to SRAM and start the host miner:
+
+```sh
+TARGET=tangmega138k scripts/flash-and-mine.sh --load /dev/ttyUSB1
+```
+
+This target uses the `GW5AST-LV138PG484AC1/I0`, its 50 MHz board clock, the
+Dock USB-UART pins, and the `tangmega138k` openFPGALoader board definition.
+The constraint file selects the current Dock RX pin (`V14`); older Dock boards
+that route RX to `Y14` need that one pin changed in `constr/tangmega138k.cst`.
+
 Load a Gowin-built bitstream to SRAM and start the host miner:
 
 ```sh
@@ -203,10 +221,13 @@ VERBOSE=1
 
 ```sh
 python scripts/tools/emulator_smoke.py
+scripts/test-unrolled-pipeline.sh
 scripts/mine-software.sh
 scripts/mine-rtl.sh
 scripts/sim.sh
 SPINAL_ROUND_SKIP=1 scripts/sim.sh
+TARGET=tangmega138k SPINAL_LANES=2 \
+  SPINAL_SIM_STRICT_NONCE_CHECKS=1 scripts/sim.sh
 make -C stratum test
 make -C stratum smoke-fakes
 ```
@@ -226,6 +247,12 @@ precomputing rounds 0..2 once per job and stopping the second pass at round 60
 for the low-word candidate filter. `SPINAL_REGISTER_PASS_OUTPUTS=1` adds one
 lane-cycle pass-boundary fence; `SPINAL_REGISTER_COMPRESSOR_OUTPUTS=1` adds
 another cycle for the one-cycle compressor datapath.
+`SPINAL_FULLY_UNROLLED=1` selects the Tang Mega throughput architecture. Each
+pipeline contains 61 registered first-pass rounds, a registered feed-forward,
+61 registered second-pass rounds, and a registered candidate output. The first
+candidate appears 124 clocks after injection and subsequent candidates appear
+every clock, so its modeled rate is simply `clock_hz * SPINAL_LANES`. It
+requires both `SPINAL_HOST_ROUND_SKIP=1` and `SPINAL_ROUND_SKIP=1`.
 `SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD=1` adds a targeted first-pass
 feed-forward fence in the full path and host-round-skip experiments.
 `SPINAL_TWO_ROUNDS_PER_CYCLE=1` is an experimental, local-K-only partially
@@ -280,6 +307,7 @@ DEFAULT_FLOW=oss make build TARGET=tangnano20k \
 - `scripts/`: setup, build, flash, simulation, and mining helpers.
 - `stratum/`: C Stratum client and fake pool/FPGA test tools.
 - `sim/cocotb/`: UART-level RTL tests.
+- `sim/unrolled_pipeline/`: direct, bit-exact fully unrolled pipeline test.
 - `docs/`: protocol, hardware, emulation, and bring-up notes.
 
 Start with:

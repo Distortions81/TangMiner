@@ -10,14 +10,23 @@ case class GowinClockProfile(
   usePll: Boolean,
   idivSel: Int = 0,
   fbdivSel: Int = 0,
-  odivSel: Int = 0
-)
+  odivSel: Int = 0,
+  rpllSupported: Boolean = true,
+  gw5IdivSel: Int = -1,
+  gw5FbdivSel: Int = -1,
+  gw5MdivSel: Int = -1,
+  gw5OdivSel: Int = -1
+) {
+  def supportsGw5Pll: Boolean =
+    gw5IdivSel >= 0 && gw5FbdivSel >= 0 && gw5MdivSel >= 0 && gw5OdivSel >= 0
+}
 
 case class TangMinerHardwareOptions(
   sharedRoundConstant: Boolean = false,
   enableEcho: Boolean = true,
   enableHardcodedJob: Boolean = true,
   fixedCandidateMode: Option[Int] = None,
+  fullyUnrolled: Boolean = false,
   wideLaneBlock: Boolean = false,
   registerPassOutputs: Boolean = false,
   registerCompressorOutputs: Boolean = false,
@@ -65,11 +74,19 @@ case class TangMinerHardwareOptions(
   require(!registerFirstPassFeedForward || registerPassOutputs, "registerFirstPassFeedForward requires registerPassOutputs")
   require(!hostRoundSkip || roundSkip, "hostRoundSkip requires roundSkip")
   require(!(hostRoundSkip && fixedCandidateMode.isEmpty), "hostRoundSkip requires fixedCandidateMode")
+  require(!fullyUnrolled || hostRoundSkip, "fullyUnrolled requires hostRoundSkip")
+  require(!(fullyUnrolled && wideLaneBlock), "fullyUnrolled and wideLaneBlock are alternative mining topologies")
+  require(!(fullyUnrolled && (twoCycleRound || threeCycleRound || twoRoundsPerCycle || twoRoundPipeline || twoPhaseRoundPipeline)),
+    "fullyUnrolled cannot be combined with iterative round-cycle modes")
+  require(!(fullyUnrolled && (csaRound || csaSchedule || balancedRoundAdder)),
+    "fullyUnrolled uses its dedicated fixed-index round datapath")
 }
 
 object GowinClockProfiles {
   val Profiles = Map(
     "27m" -> GowinClockProfile("27m", 27.0, 234, usePll = false),
+    "50m" -> GowinClockProfile("50m", 50.0, 434, usePll = true, rpllSupported = false,
+      gw5IdivSel = 1, gw5FbdivSel = 1, gw5MdivSel = 16, gw5OdivSel = 16),
     "54m" -> GowinClockProfile("54m", 54.0, 469, usePll = true, idivSel = 0, fbdivSel = 1, odivSel = 16),
     "57m" -> GowinClockProfile("57m", 57.0, 495, usePll = true, idivSel = 8, fbdivSel = 18, odivSel = 16),
     "58m5" -> GowinClockProfile("58m5", 58.5, 508, usePll = true, idivSel = 5, fbdivSel = 12, odivSel = 16),
@@ -78,16 +95,26 @@ object GowinClockProfiles {
     "81m" -> GowinClockProfile("81m", 81.0, 703, usePll = true, idivSel = 0, fbdivSel = 2, odivSel = 8),
     "84m" -> GowinClockProfile("84m", 84.0, 729, usePll = true, idivSel = 8, fbdivSel = 27, odivSel = 8),
     "85m5" -> GowinClockProfile("85m5", 85.5, 742, usePll = true, idivSel = 5, fbdivSel = 18, odivSel = 8),
-    "90m" -> GowinClockProfile("90m", 90.0, 781, usePll = true, idivSel = 2, fbdivSel = 9, odivSel = 8),
+    "75m" -> GowinClockProfile("75m", 75.0, 651, usePll = true, rpllSupported = false,
+      gw5IdivSel = 1, gw5FbdivSel = 1, gw5MdivSel = 24, gw5OdivSel = 16),
+    "80m" -> GowinClockProfile("80m", 80.0, 694, usePll = true, rpllSupported = false,
+      gw5IdivSel = 1, gw5FbdivSel = 1, gw5MdivSel = 16, gw5OdivSel = 10),
+    "90m" -> GowinClockProfile("90m", 90.0, 781, usePll = true, idivSel = 2, fbdivSel = 9, odivSel = 8,
+      gw5IdivSel = 1, gw5FbdivSel = 1, gw5MdivSel = 18, gw5OdivSel = 10),
+    "100m" -> GowinClockProfile("100m", 100.0, 868, usePll = true, rpllSupported = false,
+      gw5IdivSel = 1, gw5FbdivSel = 1, gw5MdivSel = 16, gw5OdivSel = 8),
     "100m286" -> GowinClockProfile("100m286", 100.286, 871, usePll = true, idivSel = 6, fbdivSel = 25, odivSel = 8),
     "111m" -> GowinClockProfile("111m", 111.0, 964, usePll = true, idivSel = 8, fbdivSel = 36, odivSel = 8),
     "120m" -> GowinClockProfile("120m", 120.0, 1042, usePll = true, idivSel = 8, fbdivSel = 39, odivSel = 8),
     "123m" -> GowinClockProfile("123m", 123.0, 1068, usePll = true, idivSel = 8, fbdivSel = 40, odivSel = 8),
     "124m875" -> GowinClockProfile("124m875", 124.875, 1084, usePll = true, idivSel = 7, fbdivSel = 36, odivSel = 8),
+    "125m" -> GowinClockProfile("125m", 125.0, 1085, usePll = true, rpllSupported = false,
+      gw5IdivSel = 1, gw5FbdivSel = 1, gw5MdivSel = 20, gw5OdivSel = 8),
     "126m" -> GowinClockProfile("126m", 126.0, 1094, usePll = true, idivSel = 2, fbdivSel = 13, odivSel = 8),
     "130m5" -> GowinClockProfile("130m5", 130.5, 1133, usePll = true, idivSel = 5, fbdivSel = 28, odivSel = 8),
     "135m" -> GowinClockProfile("135m", 135.0, 1172, usePll = true, idivSel = 1, fbdivSel = 9, odivSel = 8),
-    "150m" -> GowinClockProfile("150m", 150.0, 1302, usePll = true, idivSel = 8, fbdivSel = 49, odivSel = 8)
+    "150m" -> GowinClockProfile("150m", 150.0, 1302, usePll = true, idivSel = 8, fbdivSel = 49, odivSel = 8,
+      gw5IdivSel = 1, gw5FbdivSel = 1, gw5MdivSel = 30, gw5OdivSel = 10)
   )
 
   def byName(name: String): GowinClockProfile =
@@ -150,6 +177,80 @@ class GowinRpllFrom27Mhz(profile: GowinClockProfile) extends BlackBox {
     val FDLY = in Bits(4 bits)
     val RESET = in Bool()
     val RESET_P = in Bool()
+  }
+}
+
+class Gowin5PllFrom50Mhz(profile: GowinClockProfile) extends BlackBox {
+  require(profile.supportsGw5Pll, s"clock profile '${profile.name}' does not define GW5 PLL settings")
+
+  setDefinitionName("PLL")
+  noIoPrefix()
+
+  addGeneric("FCLKIN", "50")
+  addGeneric("IDIV_SEL", profile.gw5IdivSel)
+  addGeneric("FBDIV_SEL", profile.gw5FbdivSel)
+  addGeneric("MDIV_SEL", profile.gw5MdivSel)
+  addGeneric("MDIV_FRAC_SEL", 0)
+  addGeneric("ODIV0_SEL", profile.gw5OdivSel)
+  addGeneric("ODIV0_FRAC_SEL", 0)
+  addGeneric("CLKOUT0_EN", "TRUE")
+  addGeneric("CLKOUT1_EN", "FALSE")
+  addGeneric("CLKOUT2_EN", "FALSE")
+  addGeneric("CLKOUT3_EN", "FALSE")
+  addGeneric("CLKOUT4_EN", "FALSE")
+  addGeneric("CLKOUT5_EN", "FALSE")
+  addGeneric("CLKOUT6_EN", "FALSE")
+  addGeneric("CLKFB_SEL", "INTERNAL")
+
+  val io = new Bundle {
+    val LOCK = out Bool()
+    val CLKOUT0 = out Bool()
+    val CLKOUT1 = out Bool()
+    val CLKOUT2 = out Bool()
+    val CLKOUT3 = out Bool()
+    val CLKOUT4 = out Bool()
+    val CLKOUT5 = out Bool()
+    val CLKOUT6 = out Bool()
+    val CLKFBOUT = out Bool()
+    val CLKIN = in Bool()
+    val CLKFB = in Bool()
+    val RESET = in Bool()
+    val PLLPWD = in Bool()
+    val RESET_I = in Bool()
+    val RESET_O = in Bool()
+    val FBDSEL = in Bits(6 bits)
+    val IDSEL = in Bits(6 bits)
+    val MDSEL = in Bits(7 bits)
+    val MDSEL_FRAC = in Bits(3 bits)
+    val ODSEL0 = in Bits(7 bits)
+    val ODSEL1 = in Bits(7 bits)
+    val ODSEL2 = in Bits(7 bits)
+    val ODSEL3 = in Bits(7 bits)
+    val ODSEL4 = in Bits(7 bits)
+    val ODSEL5 = in Bits(7 bits)
+    val ODSEL6 = in Bits(7 bits)
+    val ODSEL0_FRAC = in Bits(3 bits)
+    val DT0 = in Bits(4 bits)
+    val DT1 = in Bits(4 bits)
+    val DT2 = in Bits(4 bits)
+    val DT3 = in Bits(4 bits)
+    val ICPSEL = in Bits(6 bits)
+    val LPFRES = in Bits(3 bits)
+    val LPFCAP = in Bits(2 bits)
+    val PSSEL = in Bits(3 bits)
+    val PSDIR = in Bool()
+    val PSPULSE = in Bool()
+    val ENCLK0 = in Bool()
+    val ENCLK1 = in Bool()
+    val ENCLK2 = in Bool()
+    val ENCLK3 = in Bool()
+    val ENCLK4 = in Bool()
+    val ENCLK5 = in Bool()
+    val ENCLK6 = in Bool()
+    val SSCPOL = in Bool()
+    val SSCON = in Bool()
+    val SSCMDSEL = in Bits(7 bits)
+    val SSCMDSEL_FRAC = in Bits(3 bits)
   }
 }
 
@@ -2034,6 +2135,245 @@ object BitcoinCandidateFilter {
   }
 }
 
+case class UnrolledPipelineStage(state: Seq[UInt], schedule: Seq[UInt], valid: Bool, nonce: UInt)
+
+object UnrolledPipelineRound {
+  def register(
+    input: UnrolledPipelineStage,
+    roundIndex: Int,
+    scheduleRequired: Boolean,
+    clearPipeline: Bool
+  ): UnrolledPipelineStage = {
+    val a = input.state(0)
+    val b = input.state(1)
+    val c = input.state(2)
+    val d = input.state(3)
+    val e = input.state(4)
+    val f = input.state(5)
+    val g = input.state(6)
+    val h = input.state(7)
+    val t1 = (h + Sha256.bigSigma1(e) + Sha256.ch(e, f, g) +
+      Sha256.word(Sha256.K(roundIndex)) + input.schedule(0)).resize(32)
+    val t2 = (Sha256.bigSigma0(a) + Sha256.maj(a, b, c)).resize(32)
+    val nextState = Seq(
+      (t1 + t2).resize(32),
+      a,
+      b,
+      c,
+      (d + t1).resize(32),
+      e,
+      f,
+      g
+    )
+    val generatedWord = if (scheduleRequired) {
+      (Sha256.smallSigma1(input.schedule(14)) + input.schedule(9) +
+        Sha256.smallSigma0(input.schedule(1)) + input.schedule(0)).resize(32)
+    } else {
+      U(0, 32 bits)
+    }
+    val nextSchedule = input.schedule.drop(1) :+ generatedWord
+    val stateRegs = nextState.map(RegNext(_))
+    val scheduleRegs = nextSchedule.map(RegNext(_))
+    val validReg = Reg(Bool()) init False
+    val nonceReg = RegNext(input.nonce)
+
+    validReg := input.valid
+    when(clearPipeline) {
+      validReg := False
+    }
+
+    UnrolledPipelineStage(stateRegs, scheduleRegs, validReg, nonceReg)
+  }
+}
+
+class BitcoinHashUnrolledFirstPass extends Component {
+  addAttribute("syn_srlstyle", "distributed_ram")
+  val io = new Bundle {
+    val clear = in Bool()
+    val validIn = in Bool()
+    val midstate = in Bits(256 bits)
+    val roundSkipPrefixState = in Bits(256 bits)
+    val roundSkipTail2 = in UInt(32 bits)
+    val roundSkipW16 = in UInt(32 bits)
+    val roundSkipW17 = in UInt(32 bits)
+    val nonceIn = in UInt(32 bits)
+    val validOut = out Bool()
+    val digestOut = out Bits(256 bits)
+    val nonceOut = out UInt(32 bits)
+  }
+
+  val firstPadStart = U(BigInt("80000000", 16), 32 bits)
+  val firstLength = U(BigInt("00000280", 16), 32 bits)
+  val zero = U(0, 32 bits)
+  val w18 = (Sha256.smallSigma1(io.roundSkipW16) +
+    Sha256.smallSigma0(io.nonceIn) + io.roundSkipTail2).resize(32)
+  val firstInput = UnrolledPipelineStage(
+    (0 until 8).map(i => Sha256.wordFromDigest(io.roundSkipPrefixState, i)),
+    Seq(io.nonceIn, firstPadStart) ++ Seq.fill(10)(zero) ++
+      Seq(firstLength, io.roundSkipW16, io.roundSkipW17, w18),
+    io.validIn,
+    io.nonceIn
+  )
+  val firstRounds = (3 to 63).foldLeft(firstInput) { (stage, roundIndex) =>
+    UnrolledPipelineRound.register(
+      stage,
+      roundIndex,
+      scheduleRequired = roundIndex <= 47,
+      io.clear
+    )
+  }
+
+  val digestNext = Sha256Pass.addFeedForward(
+    io.midstate,
+    Sha256.concatWords(firstRounds.state)
+  )
+  val digestReg = RegNext(digestNext)
+  val digestValidReg = Reg(Bool()) init False
+  val digestNonceReg = RegNext(firstRounds.nonce)
+  digestValidReg := firstRounds.valid
+  when(io.clear) {
+    digestValidReg := False
+  }
+
+  io.validOut := digestValidReg
+  io.digestOut := digestReg
+  io.nonceOut := digestNonceReg
+}
+
+class BitcoinHashUnrolledSecondPass extends Component {
+  addAttribute("syn_srlstyle", "distributed_ram")
+  val io = new Bundle {
+    val clear = in Bool()
+    val validIn = in Bool()
+    val digestIn = in Bits(256 bits)
+    val nonceIn = in UInt(32 bits)
+    val validOut = out Bool()
+    val nonceOut = out UInt(32 bits)
+    val candidateLow32 = out UInt(32 bits)
+  }
+
+  val zero = U(0, 32 bits)
+  val secondInput = UnrolledPipelineStage(
+    Sha256.Iv.map(Sha256.word),
+    (0 until 8).map(i => Sha256.wordFromDigest(io.digestIn, i)) ++
+      Seq(U(BigInt("80000000", 16), 32 bits)) ++ Seq.fill(6)(zero) ++
+      Seq(U(BigInt("00000100", 16), 32 bits)),
+    io.validIn,
+    io.nonceIn
+  )
+  val secondRounds = (0 to 60).foldLeft(secondInput) { (stage, roundIndex) =>
+    UnrolledPipelineRound.register(
+      stage,
+      roundIndex,
+      scheduleRequired = roundIndex <= 44,
+      io.clear
+    )
+  }
+
+  val candidateValidReg = Reg(Bool()) init False
+  val candidateNonceReg = RegNext(secondRounds.nonce)
+  val candidateLow32Reg = RegNext(secondRounds.state(4))
+  candidateValidReg := secondRounds.valid
+  when(io.clear) {
+    candidateValidReg := False
+  }
+
+  io.validOut := candidateValidReg
+  io.nonceOut := candidateNonceReg
+  io.candidateLow32 := candidateLow32Reg
+}
+
+class BitcoinHashUnrolledPipeline(options: TangMinerHardwareOptions) extends Component {
+  require(options.fullyUnrolled, "BitcoinHashUnrolledPipeline requires fullyUnrolled")
+  require(options.hostRoundSkip, "BitcoinHashUnrolledPipeline requires hostRoundSkip")
+  require(options.roundSkip, "BitcoinHashUnrolledPipeline requires roundSkip")
+
+  val io = new Bundle {
+    val reset = in Bool()
+    val start = in Bool()
+    val stop = in Bool()
+    val midstate = in Bits(256 bits)
+    val candidateMode = in UInt(3 bits)
+    val roundSkipPrefixState = in Bits(256 bits)
+    val roundSkipTail2 = in UInt(32 bits)
+    val roundSkipW16 = in UInt(32 bits)
+    val roundSkipW17 = in UInt(32 bits)
+    val startNonce = in UInt(32 bits)
+    val nonceStride = in UInt(32 bits)
+    val running = out Bool()
+    val found = out Bool()
+    val foundNonce = out UInt(32 bits)
+    val currentNonce = out UInt(32 bits)
+    val nonceAttempt = out Bool()
+    val candidateValid = out Bool()
+    val candidateNonce = out UInt(32 bits)
+    val candidateLow32 = out UInt(32 bits)
+  }
+
+  val runningReg = Reg(Bool()) init False
+  val foundReg = Reg(Bool()) init False
+  val foundNonceReg = Reg(UInt(32 bits)) init 0
+  val currentNonceReg = Reg(UInt(32 bits)) init 0
+  val candidateMeetsTarget = Bool()
+  val clearPipeline = io.reset || io.start || io.stop
+  val injectValid = runningReg && !candidateMeetsTarget && !clearPipeline
+
+  val firstPass = new BitcoinHashUnrolledFirstPass
+  firstPass.io.clear := clearPipeline
+  firstPass.io.validIn := injectValid
+  firstPass.io.midstate := io.midstate
+  firstPass.io.roundSkipPrefixState := io.roundSkipPrefixState
+  firstPass.io.roundSkipTail2 := io.roundSkipTail2
+  firstPass.io.roundSkipW16 := io.roundSkipW16
+  firstPass.io.roundSkipW17 := io.roundSkipW17
+  firstPass.io.nonceIn := currentNonceReg
+
+  val secondPass = new BitcoinHashUnrolledSecondPass
+  secondPass.io.clear := clearPipeline
+  secondPass.io.validIn := firstPass.io.validOut
+  secondPass.io.digestIn := firstPass.io.digestOut
+  secondPass.io.nonceIn := firstPass.io.nonceOut
+
+  candidateMeetsTarget := secondPass.io.validOut && runningReg &&
+    BitcoinCandidateFilter.meets(
+      options,
+      io.candidateMode,
+      secondPass.io.candidateLow32
+    )
+
+  when(io.reset) {
+    runningReg := False
+    foundReg := False
+    foundNonceReg := 0
+    currentNonceReg := 0
+  } otherwise {
+    when(io.stop) {
+      runningReg := False
+      foundReg := False
+    } elsewhen(io.start) {
+      runningReg := True
+      foundReg := False
+      foundNonceReg := 0
+      currentNonceReg := io.startNonce
+    } elsewhen(candidateMeetsTarget) {
+      runningReg := False
+      foundReg := True
+      foundNonceReg := secondPass.io.nonceOut
+    } elsewhen(injectValid) {
+      currentNonceReg := currentNonceReg + io.nonceStride
+    }
+  }
+
+  io.running := runningReg
+  io.found := foundReg
+  io.foundNonce := foundNonceReg
+  io.currentNonce := currentNonceReg
+  io.nonceAttempt := injectValid
+  io.candidateValid := secondPass.io.validOut
+  io.candidateNonce := secondPass.io.nonceOut
+  io.candidateLow32 := secondPass.io.candidateLow32
+}
+
 class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptions()) extends Component {
   val io = new Bundle {
     val reset = in Bool()
@@ -2528,7 +2868,36 @@ class MiningLanes(
     val nonceAttempts = out UInt(64 bits)
   }
 
-  if (options.wideLaneBlock) {
+  if (options.fullyUnrolled) {
+    require(laneStartStagger == 0, "fullyUnrolled pipelines start together and do not support laneStartStagger")
+    val pipelines = (0 until laneCount).map(_ => new BitcoinHashUnrolledPipeline(options))
+
+    for ((pipeline, lane) <- pipelines.zipWithIndex) {
+      pipeline.io.reset := io.reset
+      pipeline.io.start := io.start
+      pipeline.io.stop := io.stop
+      pipeline.io.midstate := io.midstate
+      pipeline.io.candidateMode := io.candidateMode
+      pipeline.io.roundSkipPrefixState := io.hostRoundSkipPrefixState
+      pipeline.io.roundSkipTail2 := io.hostRoundSkipTail2
+      pipeline.io.roundSkipW16 := io.hostRoundSkipW16
+      pipeline.io.roundSkipW17 := io.hostRoundSkipW17
+      pipeline.io.startNonce := U(lane, 32 bits)
+      pipeline.io.nonceStride := U(laneCount, 32 bits)
+    }
+
+    io.runningAny := pipelines.map(_.io.running).reduce(_ || _)
+    io.foundAny := pipelines.map(_.io.found).reduce(_ || _)
+    io.currentNonce := pipelines(0).io.currentNonce
+    io.nonceAttempts := NonceAttemptCounter(io.reset, io.start, pipelines.map(_.io.nonceAttempt))
+
+    io.foundNonce := pipelines(laneCount - 1).io.foundNonce
+    for (lane <- (0 until laneCount - 1).reverse) {
+      when(pipelines(lane).io.found) {
+        io.foundNonce := pipelines(lane).io.foundNonce
+      }
+    }
+  } else if (options.wideLaneBlock) {
     val lanes = new BitcoinHashWideLaneBlock(laneCount, options)
     lanes.io.reset := io.reset
     lanes.io.start := io.start
@@ -2742,6 +3111,8 @@ class Top(
   clksPerBit: Int = 871,
   resetCounterBits: Int = 24,
   usePll: Boolean = true,
+  pllKind: String = "rpll",
+  inputClockMhz: Double = 27.0,
   laneCount: Int = 5,
   laneStartStagger: Int = 0,
   clockProfile: GowinClockProfile = GowinClockProfiles.byName("100m286"),
@@ -2752,11 +3123,20 @@ class Top(
     fixedCandidateMode = Some(2)
   )
 ) extends Component {
+  val normalizedPllKind = pllKind.trim.toLowerCase
   require(clksPerBit > 1, "clksPerBit must leave room for UART start-bit centering")
+  require(inputClockMhz > 0.0, "inputClockMhz must be positive")
   require(resetCounterBits > 0, "resetCounterBits must be positive")
   require(laneCount > 0, "laneCount must be positive")
   require(laneStartStagger >= 0, "laneStartStagger must be non-negative")
   require(!usePll || clockProfile.usePll, s"clock profile '${clockProfile.name}' does not define PLL settings")
+  require(Set("rpll", "gw5").contains(normalizedPllKind), s"unsupported pllKind '$pllKind'; use rpll or gw5")
+  require(!usePll || normalizedPllKind != "rpll" || clockProfile.rpllSupported,
+    s"clock profile '${clockProfile.name}' does not define rPLL settings")
+  require(!usePll || normalizedPllKind != "gw5" || clockProfile.supportsGw5Pll,
+    s"clock profile '${clockProfile.name}' does not define GW5 PLL settings")
+  require(!usePll || normalizedPllKind != "gw5" || scala.math.abs(inputClockMhz - 50.0) < 0.001,
+    "GW5 PLL profiles require a 50 MHz input clock")
   require(!splitShaClock || usePll, "splitShaClock requires a PLL-backed SHA clock")
   require(!hardwareOptions.hostRoundSkip || !splitShaClock, "hostRoundSkip does not support splitShaClock")
 
@@ -2773,7 +3153,50 @@ class Top(
   val systemClock = Bool()
   val systemClockLocked = Bool()
 
-  if (usePll) {
+  if (usePll && normalizedPllKind == "gw5") {
+    val gowin5PllFrom50Mhz = new Gowin5PllFrom50Mhz(clockProfile)
+    gowin5PllFrom50Mhz.io.CLKIN := io.clk
+    gowin5PllFrom50Mhz.io.CLKFB := False
+    gowin5PllFrom50Mhz.io.RESET := False
+    gowin5PllFrom50Mhz.io.PLLPWD := False
+    gowin5PllFrom50Mhz.io.RESET_I := False
+    gowin5PllFrom50Mhz.io.RESET_O := False
+    gowin5PllFrom50Mhz.io.FBDSEL := 0
+    gowin5PllFrom50Mhz.io.IDSEL := 0
+    gowin5PllFrom50Mhz.io.MDSEL := 0
+    gowin5PllFrom50Mhz.io.MDSEL_FRAC := 0
+    gowin5PllFrom50Mhz.io.ODSEL0 := 0
+    gowin5PllFrom50Mhz.io.ODSEL1 := 0
+    gowin5PllFrom50Mhz.io.ODSEL2 := 0
+    gowin5PllFrom50Mhz.io.ODSEL3 := 0
+    gowin5PllFrom50Mhz.io.ODSEL4 := 0
+    gowin5PllFrom50Mhz.io.ODSEL5 := 0
+    gowin5PllFrom50Mhz.io.ODSEL6 := 0
+    gowin5PllFrom50Mhz.io.ODSEL0_FRAC := 0
+    gowin5PllFrom50Mhz.io.DT0 := 0
+    gowin5PllFrom50Mhz.io.DT1 := 0
+    gowin5PllFrom50Mhz.io.DT2 := 0
+    gowin5PllFrom50Mhz.io.DT3 := 0
+    gowin5PllFrom50Mhz.io.ICPSEL := 0
+    gowin5PllFrom50Mhz.io.LPFRES := 0
+    gowin5PllFrom50Mhz.io.LPFCAP := 0
+    gowin5PllFrom50Mhz.io.PSSEL := 0
+    gowin5PllFrom50Mhz.io.PSDIR := False
+    gowin5PllFrom50Mhz.io.PSPULSE := False
+    gowin5PllFrom50Mhz.io.ENCLK0 := True
+    gowin5PllFrom50Mhz.io.ENCLK1 := True
+    gowin5PllFrom50Mhz.io.ENCLK2 := True
+    gowin5PllFrom50Mhz.io.ENCLK3 := True
+    gowin5PllFrom50Mhz.io.ENCLK4 := True
+    gowin5PllFrom50Mhz.io.ENCLK5 := True
+    gowin5PllFrom50Mhz.io.ENCLK6 := True
+    gowin5PllFrom50Mhz.io.SSCPOL := False
+    gowin5PllFrom50Mhz.io.SSCON := False
+    gowin5PllFrom50Mhz.io.SSCMDSEL := 0
+    gowin5PllFrom50Mhz.io.SSCMDSEL_FRAC := 0
+    systemClock := gowin5PllFrom50Mhz.io.CLKOUT0
+    systemClockLocked := gowin5PllFrom50Mhz.io.LOCK
+  } else if (usePll) {
     val pll = new GowinRpllFrom27Mhz(clockProfile)
     pll.io.CLKIN := io.clk
     pll.io.CLKFB := False
@@ -2794,7 +3217,8 @@ class Top(
 
   val controlClock = if (splitShaClock) io.clk else systemClock
   val controlClockLocked = if (splitShaClock) True else systemClockLocked
-  val controlClksPerBit = if (splitShaClock) GowinClockProfiles.byName("27m").clksPerBit else clksPerBit
+  val inputClockClksPerBit = scala.math.round(inputClockMhz * 1000000.0 / 115200.0).toInt
+  val controlClksPerBit = if (splitShaClock) inputClockClksPerBit else clksPerBit
   val controlDomain = ClockDomain(controlClock, config = ClockDomainConfig(resetKind = BOOT))
   val shaDomain = ClockDomain(systemClock, config = ClockDomainConfig(resetKind = BOOT))
   val SplitJobPayloadBits = 256 + 96 + 3
@@ -3318,6 +3742,9 @@ object GenerateVerilog extends App {
   def envInt(names: Seq[String], default: Int): Int =
     names.collectFirst(Function.unlift(sys.env.get)).map(_.toInt).getOrElse(default)
 
+  def envDouble(names: Seq[String], default: Double): Double =
+    names.collectFirst(Function.unlift(sys.env.get)).map(_.toDouble).getOrElse(default)
+
   def envOptionalInt(names: Seq[String], default: Option[Int] = None): Option[Int] =
     names.collectFirst(Function.unlift(sys.env.get)) match {
       case Some(value) if value.nonEmpty => Some(value.toInt)
@@ -3327,6 +3754,8 @@ object GenerateVerilog extends App {
 
   val targetDirectory = sys.env.getOrElse("TANGMINER_VERILOG_DIR", "build/spinal")
   val usePll = envBoolean("TANGMINER_USE_PLL", default = true)
+  val pllKind = envString(Seq("TANGMINER_PLL_KIND", "SPINAL_PLL_KIND"), "rpll")
+  val inputClockMhz = envDouble(Seq("TANGMINER_INPUT_CLOCK_MHZ", "SPINAL_INPUT_CLOCK_MHZ"), 27.0)
   val clockProfile = GowinClockProfiles.byName(envString(Seq("TANGMINER_CLOCK_PROFILE", "SPINAL_CLOCK_PROFILE"), "100m286"))
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), clockProfile.clksPerBit)
   val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 5)
@@ -3338,6 +3767,8 @@ object GenerateVerilog extends App {
     enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = false),
     enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = false),
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"), Some(2)),
+    fullyUnrolled = envBoolean("TANGMINER_FULLY_UNROLLED", default = false) ||
+      envBoolean("SPINAL_FULLY_UNROLLED", default = false),
     wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
     registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
@@ -3381,6 +3812,8 @@ object GenerateVerilog extends App {
   ).generateVerilog(new Top(
     clksPerBit = clksPerBit,
     usePll = usePll,
+    pllKind = pllKind,
+    inputClockMhz = inputClockMhz,
     laneCount = laneCount,
     laneStartStagger = laneStartStagger,
     clockProfile = clockProfile,
@@ -3396,6 +3829,12 @@ object GenerateSimVerilog extends App {
   def envInt(names: Seq[String], default: Int): Int =
     names.collectFirst(Function.unlift(sys.env.get)).map(_.toInt).getOrElse(default)
 
+  def envString(names: Seq[String], default: String): String =
+    names.collectFirst(Function.unlift(sys.env.get)).getOrElse(default)
+
+  def envDouble(names: Seq[String], default: Double): Double =
+    names.collectFirst(Function.unlift(sys.env.get)).map(_.toDouble).getOrElse(default)
+
   def envOptionalInt(names: Seq[String]): Option[Int] =
     names.collectFirst(Function.unlift(sys.env.get)).filter(_.nonEmpty).map(_.toInt)
 
@@ -3403,11 +3842,15 @@ object GenerateSimVerilog extends App {
   val laneCount = envInt(Seq("TANGMINER_LANES", "SPINAL_LANES"), 5)
   val laneStartStagger = envInt(Seq("TANGMINER_LANE_START_STAGGER", "SPINAL_LANE_START_STAGGER"), 0)
   val clksPerBit = envInt(Seq("TANGMINER_CLKS_PER_BIT", "SPINAL_CLKS_PER_BIT"), 8)
+  val pllKind = envString(Seq("TANGMINER_PLL_KIND", "SPINAL_PLL_KIND"), "rpll")
+  val inputClockMhz = envDouble(Seq("TANGMINER_INPUT_CLOCK_MHZ", "SPINAL_INPUT_CLOCK_MHZ"), 27.0)
   val hardwareOptions = TangMinerHardwareOptions(
     sharedRoundConstant = envBoolean("TANGMINER_SHARED_K", default = false),
     enableEcho = envBoolean("TANGMINER_ENABLE_ECHO", default = true),
     enableHardcodedJob = envBoolean("TANGMINER_ENABLE_HARDCODED", default = true),
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE")),
+    fullyUnrolled = envBoolean("TANGMINER_FULLY_UNROLLED", default = false) ||
+      envBoolean("SPINAL_FULLY_UNROLLED", default = false),
     wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
     registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
@@ -3452,6 +3895,8 @@ object GenerateSimVerilog extends App {
     clksPerBit = clksPerBit,
     resetCounterBits = 4,
     usePll = false,
+    pllKind = pllKind,
+    inputClockMhz = inputClockMhz,
     laneCount = laneCount,
     laneStartStagger = laneStartStagger,
     clockProfile = GowinClockProfiles.byName("27m"),

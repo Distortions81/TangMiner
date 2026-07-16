@@ -1,0 +1,20 @@
+IO_LOC "clk" V22;
+IO_PORT "clk" IO_TYPE=LVCMOS33;
+
+IO_LOC "led[0]" P19;
+IO_LOC "led[1]" R19;
+IO_LOC "led[2]" T21;
+IO_LOC "led[3]" U21;
+IO_LOC "led[4]" P16;
+IO_LOC "led[5]" R17;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33;
+IO_PORT "led[1]" IO_TYPE=LVCMOS33;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33;
+IO_PORT "led[3]" IO_TYPE=LVCMOS33;
+IO_PORT "led[4]" IO_TYPE=LVCMOS33;
+IO_PORT "led[5]" IO_TYPE=LVCMOS33;
+
+IO_LOC "uart_tx_pin" U15;
+IO_LOC "uart_rx_pin" V14;
+IO_PORT "uart_tx_pin" IO_TYPE=LVCMOS33;
+IO_PORT "uart_rx_pin" IO_TYPE=LVCMOS33;

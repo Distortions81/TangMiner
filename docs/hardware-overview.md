@@ -1,7 +1,7 @@
 # Hardware Overview
 
-The active TangMiner bitstream is a small UART-controlled hash engine for the
-Tang Nano 20K. The host does the pool-facing work and sends compact jobs to the
+TangMiner bitstreams are UART-controlled hash engines for supported Sipeed Tang
+boards. The host does the pool-facing work and sends compact jobs to the
 FPGA. The FPGA then loops over nonces locally and only talks back when a nonce
 meets the configured candidate filter.
 
@@ -12,10 +12,12 @@ At a high level:
 - `UartRx` samples incoming serial bits and emits bytes.
 - The top-level parser finds the `TN` sync bytes, decodes the command, and loads
   the job registers.
-- Six `BitcoinHashCore` lanes split the nonce space by residue: lane starts
-  `0..5`, and each lane increments by `6`.
-- Each lane has two iterative 64-round `Sha256Compress` engines: one for the
-  header final-block pass and one for the second SHA-256 pass.
+- On the selected Tang Nano 20K image, six `BitcoinHashCore` lanes split the
+  nonce space by residue: lane starts `0..5`, and each lane increments by `6`.
+- Each Nano lane has two iterative 64-round `Sha256Compress` engines: one for
+  the header final-block pass and one for the second SHA-256 pass.
+- Tang Mega fully unrolled pipelines instead dedicate a registered hardware
+  stage to each retained round and accept a new nonce on every clock.
 - Experimental round-skip mode precomputes first-pass rounds 0..2 once per job
   and starts nonce-dependent work at round 3.
 - Each lane adds the SHA-256 feed-forward state outside the compressors: job
@@ -25,6 +27,20 @@ At a high level:
 - On a hit, a priority selector latches one found nonce and sends `F || nonce`.
 - The host reconstructs the block header, recomputes the hash, and performs the
   full share target comparison.
+
+For `TARGET=tangmega138k`, the onboard 50 MHz clock feeds a native GW5 `PLL`.
+Each fully unrolled pipeline skips host-precomputed first-pass rounds 0..2,
+registers rounds 3..63, registers the first-pass feed-forward, registers
+second-pass rounds 0..60, and then registers the low-word candidate. This is a
+124-clock start-to-result latency with an initiation interval of one clock.
+Multiple pipelines stripe the nonce space exactly like the iterative lanes, so
+aggregate modeled throughput is `pipeline_count * fabric_clock_hz`.
+
+A reusable half-length pipeline must process every nonce twice. Three halves can
+only average 1.5 completed nonces per clock and require pass tagging, queues,
+and alternating first/second-pass scheduling. Four halves contain the same 244
+retained round stages as two complete pipelines, then add scheduling overhead.
+The Tang Mega target therefore uses complete dedicated pipelines.
 
 On the default 20K build, the onboard `27 MHz` clock feeds an internal Gowin
 `rPLL` that drives the hash fabric at `67.500 MHz`. In steady state each lane

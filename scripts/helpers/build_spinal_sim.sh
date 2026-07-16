@@ -13,7 +13,7 @@ target="${TARGET:-tangnano20k}"
 flow="${DEFAULT_FLOW:-}"
 if [[ -z "$flow" ]]; then
   case "$target" in
-    tangnano20k) flow="gowin" ;;
+    tangnano20k|tangmega138k) flow="gowin" ;;
     tangnano9k) flow="oss" ;;
     *) flow="oss" ;;
   esac
@@ -22,19 +22,36 @@ fi
 default_lanes=4
 default_register_pass_outputs=0
 default_minimize_sha_reset=0
+default_pll_kind=rpll
+default_input_clock_mhz=27
+default_fully_unrolled=0
+default_round_skip=0
+default_host_round_skip=0
+default_fixed_candidate=
 if [[ "$target" = "tangnano20k" && "$flow" = "oss" ]]; then
   default_lanes=5
 elif [[ "$target" = "tangnano20k" ]]; then
   default_lanes=6
   default_register_pass_outputs=1
   default_minimize_sha_reset=1
+elif [[ "$target" = "tangmega138k" ]]; then
+  default_lanes=1
+  default_pll_kind=gw5
+  default_input_clock_mhz=50
+  default_fully_unrolled=1
+  default_round_skip=1
+  default_host_round_skip=1
+  default_fixed_candidate=2
 fi
 
 lanes="${SPINAL_LANES:-$default_lanes}"
+pll_kind="${SPINAL_PLL_KIND:-$default_pll_kind}"
+input_clock_mhz="${SPINAL_INPUT_CLOCK_MHZ:-$default_input_clock_mhz}"
 shared_k="${SPINAL_SHARED_K:-0}"
+fully_unrolled="${SPINAL_FULLY_UNROLLED:-$default_fully_unrolled}"
 enable_echo="${SPINAL_SIM_ENABLE_ECHO:-1}"
 enable_hardcoded="${SPINAL_SIM_ENABLE_HARDCODED:-1}"
-fixed_candidate="${SPINAL_SIM_FIXED_CANDIDATE:-}"
+fixed_candidate="${SPINAL_SIM_FIXED_CANDIDATE:-$default_fixed_candidate}"
 wide_lanes="${SPINAL_WIDE_LANES:-0}"
 share_job_state="${SPINAL_SHARE_JOB_STATE:-0}"
 lane_start_stagger="${SPINAL_LANE_START_STAGGER:-0}"
@@ -47,9 +64,9 @@ two_rounds_per_cycle="${SPINAL_TWO_ROUNDS_PER_CYCLE:-0}"
 register_round_constant="${SPINAL_REGISTER_ROUND_CONSTANT:-0}"
 minimize_sha_reset="${SPINAL_MINIMIZE_SHA_RESET:-$default_minimize_sha_reset}"
 split_sha_clock="${SPINAL_SPLIT_SHA_CLOCK:-0}"
-round_skip="${SPINAL_ROUND_SKIP:-0}"
+round_skip="${SPINAL_ROUND_SKIP:-$default_round_skip}"
 csa_round="${SPINAL_CSA_ROUND:-0}"
-host_round_skip="${SPINAL_HOST_ROUND_SKIP:-0}"
+host_round_skip="${SPINAL_HOST_ROUND_SKIP:-$default_host_round_skip}"
 
 require_command java "Install OpenJDK or run scripts/setup.sh."
 sbt="$(sbt_bin)"
@@ -62,8 +79,11 @@ tmp="$config.tmp"
 {
   echo "target=$target"
   echo "lanes=$lanes"
+  echo "pll_kind=$pll_kind"
+  echo "input_clock_mhz=$input_clock_mhz"
   echo "clks_per_bit=8"
   echo "shared_k=$shared_k"
+  echo "fully_unrolled=$fully_unrolled"
   echo "enable_echo=$enable_echo"
   echo "enable_hardcoded=$enable_hardcoded"
   echo "fixed_candidate=$fixed_candidate"
@@ -95,9 +115,12 @@ if [[ -e "$config" ]] &&
 fi
 
 mv "$tmp" "$config"
+TANGMINER_PLL_KIND="$pll_kind" \
+TANGMINER_INPUT_CLOCK_MHZ="$input_clock_mhz" \
 TANGMINER_LANES="$lanes" \
 TANGMINER_CLKS_PER_BIT=8 \
 TANGMINER_SHARED_K="$shared_k" \
+TANGMINER_FULLY_UNROLLED="$fully_unrolled" \
 TANGMINER_ENABLE_ECHO="$enable_echo" \
 TANGMINER_ENABLE_HARDCODED="$enable_hardcoded" \
 TANGMINER_FIXED_CANDIDATE="$fixed_candidate" \

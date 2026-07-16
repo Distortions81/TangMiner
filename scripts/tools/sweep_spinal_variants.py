@@ -13,20 +13,26 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PROFILES = ("54m", "67m5", "81m", "84m", "85m5", "90m", "100m286", "111m", "120m", "123m", "124m875", "126m", "130m5")
+DEFAULT_NANO20K_PROFILES = ("54m", "67m5", "81m", "84m", "85m5", "90m", "100m286", "111m", "120m", "123m", "124m875", "126m", "130m5")
+DEFAULT_MEGA138K_PROFILES = ("75m", "80m", "90m", "100m", "125m", "150m")
 DEFAULT_LANES = (4, 5, 6)
 PROFILE_CLOCK_MHZ = {
+    "50m": 50.000,
     "54m": 54.000,
     "67m5": 67.500,
+    "75m": 75.000,
+    "80m": 80.000,
     "81m": 81.000,
     "84m": 84.000,
     "85m5": 85.500,
     "90m": 90.000,
+    "100m": 100.000,
     "100m286": 100.286,
     "111m": 111.000,
     "120m": 120.000,
     "123m": 123.000,
     "124m875": 124.875,
+    "125m": 125.000,
     "126m": 126.000,
     "130m5": 130.500,
     "135m": 135.000,
@@ -95,6 +101,9 @@ def truthy(value):
 
 
 def lane_period_cycles(args):
+    fully_unrolled = truthy(make_var_value(args, "SPINAL_FULLY_UNROLLED", "1" if args.target == "tangmega138k" else "0"))
+    if fully_unrolled:
+        return 1
     round_skip = truthy(make_var_value(args, "SPINAL_ROUND_SKIP", "0"))
     two_cycle = truthy(make_var_value(args, "SPINAL_TWO_CYCLE_ROUND", "0"))
     three_cycle = truthy(make_var_value(args, "SPINAL_THREE_CYCLE_ROUND", "0"))
@@ -126,6 +135,7 @@ def lane_period_cycles(args):
 
 def build_variant(args, lanes, profile):
     clock_mhz = PROFILE_CLOCK_MHZ[profile]
+    fully_unrolled = truthy(make_var_value(args, "SPINAL_FULLY_UNROLLED", "1" if args.target == "tangmega138k" else "0"))
     round_skip = truthy(make_var_value(args, "SPINAL_ROUND_SKIP", "0"))
     host_round_skip = truthy(make_var_value(args, "SPINAL_HOST_ROUND_SKIP", "0"))
     csa_round = truthy(make_var_value(args, "SPINAL_CSA_ROUND", "0"))
@@ -146,6 +156,8 @@ def build_variant(args, lanes, profile):
     first_pass_feedforward = truthy(make_var_value(args, "SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD", "0"))
     lane_period = lane_period_cycles(args)
     suffix = ""
+    if fully_unrolled:
+        suffix += "_unrolled1"
     if round_skip:
         suffix += "_skip1"
     if host_round_skip:
@@ -181,6 +193,8 @@ def build_variant(args, lanes, profile):
     if local_k:
         suffix += "_localK"
     variant = f"lanes{lanes}_{profile}{suffix}"
+    if args.target != "tangnano20k":
+        variant = f"{args.target}_{variant}"
     build_dir = REPO_ROOT / args.build_root / variant
     build_dir.mkdir(parents=True, exist_ok=True)
     log_path = build_dir / "build.log"
@@ -199,7 +213,7 @@ def build_variant(args, lanes, profile):
         "make",
         "-B",
         "build",
-        "TARGET=tangnano20k",
+        f"TARGET={args.target}",
         f"SPINAL_LANES={lanes}",
         f"SPINAL_CLOCK_PROFILE={profile}",
         f"BUILD={args.build_root}/{variant}",
@@ -211,7 +225,7 @@ def build_variant(args, lanes, profile):
 
     env = tool_defaults()
     timeout_seconds = args.variant_timeout_seconds
-    print(f"\n==> lanes={lanes} profile={profile} clock={clock_mhz:.3f}MHz")
+    print(f"\n==> target={args.target} lanes={lanes} profile={profile} clock={clock_mhz:.3f}MHz")
     print(f"    log: {log_path.relative_to(REPO_ROOT)}")
     start_time = time.monotonic()
     timed_out = False
@@ -457,8 +471,14 @@ def print_table(results):
 
 def main():
     parser = argparse.ArgumentParser(description="Build and rank TangMiner SpinalHDL lane/clock variants")
-    parser.add_argument("--lanes", default=",".join(str(v) for v in DEFAULT_LANES), help="comma-separated lane counts")
-    parser.add_argument("--profiles", default=",".join(DEFAULT_PROFILES), help="comma-separated clock profiles")
+    parser.add_argument(
+        "--target",
+        choices=("tangnano20k", "tangmega138k"),
+        default=os.environ.get("TARGET", "tangnano20k"),
+        help="FPGA target to build (default: TARGET or tangnano20k)",
+    )
+    parser.add_argument("--lanes", help="comma-separated lane or pipeline counts (target-specific default)")
+    parser.add_argument("--profiles", help="comma-separated clock profiles (target-specific default)")
     parser.add_argument("--build-root", default="build/sweep", help="ignored build directory for variant outputs")
     parser.add_argument("--dry-run", action="store_true", help="print make commands without running them")
     parser.add_argument("--json", dest="json_path", help="write machine-readable result JSON")
@@ -477,8 +497,12 @@ def main():
     )
     args = parser.parse_args()
 
-    lanes = parse_csv_ints(args.lanes)
-    profiles = parse_csv_strings(args.profiles)
+    default_lanes = (1,) if args.target == "tangmega138k" else DEFAULT_LANES
+    default_profiles = (
+        DEFAULT_MEGA138K_PROFILES if args.target == "tangmega138k" else DEFAULT_NANO20K_PROFILES
+    )
+    lanes = parse_csv_ints(args.lanes or ",".join(str(value) for value in default_lanes))
+    profiles = parse_csv_strings(args.profiles or ",".join(default_profiles))
     unknown_profiles = [profile for profile in profiles if profile not in PROFILE_CLOCK_MHZ]
     if unknown_profiles:
         raise SystemExit(f"unsupported profile(s): {', '.join(unknown_profiles)}")

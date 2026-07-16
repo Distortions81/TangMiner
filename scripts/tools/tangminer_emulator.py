@@ -351,6 +351,10 @@ def _normalise_board(value: str) -> str:
         "20k": "tangnano20k",
         "tn20k": "tangnano20k",
         "tangnano20": "tangnano20k",
+        "138k": "tangmega138k",
+        "mega138k": "tangmega138k",
+        "tm138k": "tangmega138k",
+        "tangmega138": "tangmega138k",
     }
     return aliases.get(value.lower(), value.lower())
 
@@ -411,7 +415,7 @@ def main() -> None:
     parser.add_argument(
         "--board",
         default="tangnano20k",
-        help="board label for logs; 9k/tn9k and 20k/tn20k aliases are accepted",
+        help="board label for logs; 9k/tn9k, 20k/tn20k, and 138k/tm138k aliases are accepted",
     )
     parser.add_argument(
         "--max-nonces",
@@ -454,8 +458,8 @@ def main() -> None:
     args = parser.parse_args()
 
     board = _normalise_board(args.board)
-    if board not in ("tangnano9k", "tangnano20k"):
-        raise SystemExit("unsupported board label; use tangnano9k or tangnano20k")
+    if board not in ("tangnano9k", "tangnano20k", "tangmega138k"):
+        raise SystemExit("unsupported board label; use tangnano9k, tangnano20k, or tangmega138k")
 
     max_nonces = None if args.max_nonces == 0 else args.max_nonces
     stats_interval = None if args.stats_interval <= 0 else args.stats_interval

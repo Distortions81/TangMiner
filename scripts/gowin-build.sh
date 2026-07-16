@@ -17,6 +17,10 @@ GOWIN_ROUTE_MAXFAN=${GOWIN_ROUTE_MAXFAN:-23}
 GOWIN_CLOCK_ROUTE_ORDER=${GOWIN_CLOCK_ROUTE_ORDER:-1}
 GOWIN_CORRECT_HOLD=${GOWIN_CORRECT_HOLD:-0}
 GOWIN_REPLICATE_RESOURCES=${GOWIN_REPLICATE_RESOURCES:-1}
+GOWIN_CPU_PIN_REUSE=${GOWIN_CPU_PIN_REUSE:-0}
+GOWIN_SSPI_PIN_REUSE=${GOWIN_SSPI_PIN_REUSE:-0}
+GOWIN_SYNTH_ONLY=${GOWIN_SYNTH_ONLY:-0}
+GOWIN_KEEP_FAILED=${GOWIN_KEEP_FAILED:-0}
 
 if ! command -v "${GOWIN_SH}" >/dev/null 2>&1; then
     echo "error: ${GOWIN_SH} not found. Install Official Gowin EDA and set GOWIN_SH=/path/to/gw_sh." >&2
@@ -46,7 +50,12 @@ work_parent_dir="${final_project_dir}.work.$$"
 work_project_dir="${work_parent_dir}/${final_project_leaf}"
 
 cleanup_work_project_dir() {
-    rm -rf "${work_parent_dir}"
+    status=$?
+    if [ "${status}" -ne 0 ] && [ "${GOWIN_KEEP_FAILED}" != "0" ]; then
+        echo "Preserving failed Gowin project: ${work_project_dir}" >&2
+    else
+        rm -rf "${work_parent_dir}"
+    fi
 }
 trap cleanup_work_project_dir EXIT
 
@@ -115,6 +124,11 @@ pnr_tcl="${GOWIN_PROJECT_DIR}/run-pnr.tcl"
     run_gowin_sh "$(basename -- "${syn_tcl}")"
 )
 
+if [ "${GOWIN_SYNTH_ONLY}" != "0" ]; then
+    publish_work_project_dir
+    exit 0
+fi
+
 process_config="${GOWIN_PROJECT_DIR}/impl/${GOWIN_PROJECT_NAME}_process_config.json"
 if [ -f "${process_config}" ]; then
     python3 - \
@@ -124,7 +138,9 @@ if [ -f "${process_config}" ]; then
         "${GOWIN_ROUTE_MAXFAN}" \
         "${GOWIN_CLOCK_ROUTE_ORDER}" \
         "${GOWIN_CORRECT_HOLD}" \
-        "${GOWIN_REPLICATE_RESOURCES}" <<'PY'
+        "${GOWIN_REPLICATE_RESOURCES}" \
+        "${GOWIN_CPU_PIN_REUSE}" \
+        "${GOWIN_SSPI_PIN_REUSE}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -132,6 +148,8 @@ from pathlib import Path
 path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="ascii"))
 data["MSPI"] = True
+data["CPU"] = sys.argv[8] != "0"
+data["SSPI"] = sys.argv[9] != "0"
 data["Generate_Plain_Text_Timing_Report"] = True
 data["Place_Option"] = sys.argv[2]
 data["Route_Option"] = sys.argv[3]

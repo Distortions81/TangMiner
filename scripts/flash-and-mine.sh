@@ -21,8 +21,8 @@ options:
   -h, --help    show this help
 
 environment:
-  TARGET=tangnano20k|tangnano9k
-  BITSTREAM_FLOW=gowin|oss (default: gowin for 20K, oss for 9K)
+  TARGET=tangnano20k|tangnano9k|tangmega138k
+  BITSTREAM_FLOW=gowin|oss (default: gowin for 20K/138K, oss for 9K)
   DEFAULT_FLOW=gowin|oss (Makefile flow, used when BITSTREAM_FLOW is unset)
   SPINAL_LANES=N
   OPENFPGALOADER='openFPGALoader --ftdi-channel 0 --freq 2000000'
@@ -94,7 +94,7 @@ fi
 
 if [[ -z "$flow" ]]; then
   case "$target" in
-    tangnano20k) flow="gowin" ;;
+    tangnano20k|tangmega138k) flow="gowin" ;;
     tangnano9k) flow="oss" ;;
     *)
       echo "unsupported target: $target" >&2
@@ -119,6 +119,7 @@ make_args=()
 if [[ -n "${OPENFPGALOADER:-}" ]]; then
   make_args+=(OPENFPGALOADER="$OPENFPGALOADER")
 fi
+make_args+=(TARGET="$target")
 make_args+=(DEFAULT_FLOW="$flow")
 
 if [[ "$flow" = "gowin" ]]; then
@@ -127,4 +128,4 @@ fi
 
 make "${make_args[@]}" oss-build
 make "${make_args[@]}" "oss-$program_action"
-exec make mine-hardware SERIAL_PORT="$serial_port"
+exec make "${make_args[@]}" mine-hardware SERIAL_PORT="$serial_port"

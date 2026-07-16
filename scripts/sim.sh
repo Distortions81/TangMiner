@@ -25,7 +25,7 @@ target="${TARGET:-tangnano20k}"
 flow="${DEFAULT_FLOW:-}"
 if [[ -z "$flow" ]]; then
   case "$target" in
-    tangnano20k) flow="gowin" ;;
+    tangnano20k|tangmega138k) flow="gowin" ;;
     tangnano9k) flow="oss" ;;
     *) flow="oss" ;;
   esac
@@ -35,6 +35,12 @@ default_lanes=4
 default_register_pass_outputs=0
 default_minimize_sha_reset=0
 default_hardware_clock_hz=27000000
+default_pll_kind=rpll
+default_input_clock_mhz=27
+default_fully_unrolled=0
+default_round_skip=0
+default_host_round_skip=0
+default_sim_fixed_candidate=
 if [[ "$target" = "tangnano20k" && "$flow" = "oss" ]]; then
   default_lanes=5
   default_hardware_clock_hz=54000000
@@ -43,11 +49,26 @@ elif [[ "$target" = "tangnano20k" ]]; then
   default_register_pass_outputs=1
   default_minimize_sha_reset=1
   default_hardware_clock_hz=67500000
+elif [[ "$target" = "tangmega138k" ]]; then
+  default_lanes=1
+  default_hardware_clock_hz=100000000
+  default_pll_kind=gw5
+  default_input_clock_mhz=50
+  default_fully_unrolled=1
+  default_round_skip=1
+  default_host_round_skip=1
+  default_sim_fixed_candidate=2
 fi
 
 export SPINAL_LANES="${SPINAL_LANES:-$default_lanes}"
+export SPINAL_PLL_KIND="${SPINAL_PLL_KIND:-$default_pll_kind}"
+export SPINAL_INPUT_CLOCK_MHZ="${SPINAL_INPUT_CLOCK_MHZ:-$default_input_clock_mhz}"
+export SPINAL_FULLY_UNROLLED="${SPINAL_FULLY_UNROLLED:-$default_fully_unrolled}"
 export SPINAL_REGISTER_PASS_OUTPUTS="${SPINAL_REGISTER_PASS_OUTPUTS:-$default_register_pass_outputs}"
 export SPINAL_MINIMIZE_SHA_RESET="${SPINAL_MINIMIZE_SHA_RESET:-$default_minimize_sha_reset}"
+export SPINAL_ROUND_SKIP="${SPINAL_ROUND_SKIP:-$default_round_skip}"
+export SPINAL_HOST_ROUND_SKIP="${SPINAL_HOST_ROUND_SKIP:-$default_host_round_skip}"
+export SPINAL_SIM_FIXED_CANDIDATE="${SPINAL_SIM_FIXED_CANDIDATE:-$default_sim_fixed_candidate}"
 export HARDWARE_CLOCK_HZ="${HARDWARE_CLOCK_HZ:-$default_hardware_clock_hz}"
 
 scripts/helpers/build_spinal_sim.sh
@@ -69,6 +90,10 @@ import os
 
 def truthy(name):
     return os.environ.get(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+if truthy("SPINAL_FULLY_UNROLLED"):
+    print(1)
+    raise SystemExit
 
 base_rounds = 61 if truthy("SPINAL_ROUND_SKIP") else 64
 base = (base_rounds + 1) // 2 if truthy("SPINAL_TWO_ROUNDS_PER_CYCLE") else base_rounds
@@ -107,6 +132,9 @@ runner.test(
         "LANE_COUNT": os.environ.get("LANE_COUNT", "6"),
         "HARDWARE_CLOCK_HZ": os.environ.get("HARDWARE_CLOCK_HZ", "67500000"),
         "EXPECTED_LANE_PERIOD_CYCLES": os.environ.get("EXPECTED_LANE_PERIOD_CYCLES", "65"),
+        "HOST_ROUND_SKIP_PAYLOAD": os.environ.get("SPINAL_HOST_ROUND_SKIP", "0"),
+        "FIXED_CANDIDATE_MODE": os.environ.get("SPINAL_SIM_FIXED_CANDIDATE", ""),
+        "STRICT_NONCE_CHECKS": os.environ.get("SPINAL_SIM_STRICT_NONCE_CHECKS", "0"),
     },
 )
 PY
