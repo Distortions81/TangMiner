@@ -21,6 +21,7 @@ GOWIN_CPU_PIN_REUSE=${GOWIN_CPU_PIN_REUSE:-0}
 GOWIN_SSPI_PIN_REUSE=${GOWIN_SSPI_PIN_REUSE:-0}
 GOWIN_SYNTH_ONLY=${GOWIN_SYNTH_ONLY:-0}
 GOWIN_KEEP_FAILED=${GOWIN_KEEP_FAILED:-0}
+GOWIN_CONVERT_SDP32_36_TO_SDP16_18=${GOWIN_CONVERT_SDP32_36_TO_SDP16_18:-1}
 
 if ! command -v "${GOWIN_SH}" >/dev/null 2>&1; then
     echo "error: ${GOWIN_SH} not found. Install Official Gowin EDA and set GOWIN_SH=/path/to/gw_sh." >&2
@@ -140,7 +141,8 @@ if [ -f "${process_config}" ]; then
         "${GOWIN_CORRECT_HOLD}" \
         "${GOWIN_REPLICATE_RESOURCES}" \
         "${GOWIN_CPU_PIN_REUSE}" \
-        "${GOWIN_SSPI_PIN_REUSE}" <<'PY'
+        "${GOWIN_SSPI_PIN_REUSE}" \
+        "${GOWIN_CONVERT_SDP32_36_TO_SDP16_18}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -150,6 +152,7 @@ data = json.loads(path.read_text(encoding="ascii"))
 data["MSPI"] = True
 data["CPU"] = sys.argv[8] != "0"
 data["SSPI"] = sys.argv[9] != "0"
+data["Convert_SDP32_36_to_SDP16_18"] = sys.argv[10] != "0"
 data["Generate_Plain_Text_Timing_Report"] = True
 data["Place_Option"] = sys.argv[2]
 data["Route_Option"] = sys.argv[3]

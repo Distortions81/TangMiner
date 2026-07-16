@@ -241,6 +241,7 @@ GOWIN_CORRECT_HOLD ?= 0
 GOWIN_REPLICATE_RESOURCES ?= 1
 GOWIN_SYNTH_ONLY ?= 0
 GOWIN_KEEP_FAILED ?= 0
+GOWIN_CONVERT_SDP32_36_TO_SDP16_18 ?= 1
 truthy = $(filter 1 true TRUE yes YES on ON,$(strip $(1)))
 GOWIN_OPTION_SUFFIX := $(if $(call truthy,$(SPINAL_FULLY_UNROLLED)),_unrolled1,)$(if $(call truthy,$(SPINAL_ROUND_SKIP)),_skip1,)$(if $(call truthy,$(SPINAL_HOST_ROUND_SKIP)),_hostskip1,)$(if $(call truthy,$(SPINAL_TWO_ROUNDS_PER_CYCLE)),_2round1,)$(if $(call truthy,$(SPINAL_TWO_ROUND_PIPELINE)),_2rpipe1,)$(if $(call truthy,$(SPINAL_TWO_PHASE_ROUND_PIPELINE)),_2phasepipe1,)$(if $(call truthy,$(SPINAL_REGISTER_PASS_OUTPUTS)),_regpass1,)$(if $(call truthy,$(SPINAL_REGISTER_COMPRESSOR_OUTPUTS)),_regcomp1,)$(if $(call truthy,$(SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD)),_regff1,)$(if $(call truthy,$(SPINAL_REGISTER_ROUND_CONSTANT)),_regk1,)$(if $(call truthy,$(SPINAL_MINIMIZE_SHA_RESET)),_minreset1,)$(if $(call truthy,$(SPINAL_CSA_ROUND)),_csa1,)$(if $(call truthy,$(SPINAL_CSA_SCHEDULE)),_csasch1,)$(if $(call truthy,$(SPINAL_BALANCED_ROUND_ADDER)),_baladd1,)$(if $(call truthy,$(SPINAL_SHARE_JOB_STATE)),_sharejob1,)$(if $(filter 0 false FALSE no NO off OFF,$(strip $(SPINAL_SHARED_K))),_localK,)
 GOWIN_PROJECT_NAME ?= tangminer_gowin_$(TARGET)_lanes$(SPINAL_LANES)_$(SPINAL_CLOCK_PROFILE)$(GOWIN_OPTION_SUFFIX)
@@ -433,6 +434,7 @@ gowin-build: $(SPINAL_SRC) $(CST) $(GOWIN_SDC) scripts/gowin-build.sh scripts/go
 	GOWIN_SSPI_PIN_REUSE="$(GOWIN_SSPI_PIN_REUSE)" \
 	GOWIN_SYNTH_ONLY="$(GOWIN_SYNTH_ONLY)" \
 	GOWIN_KEEP_FAILED="$(GOWIN_KEEP_FAILED)" \
+	GOWIN_CONVERT_SDP32_36_TO_SDP16_18="$(GOWIN_CONVERT_SDP32_36_TO_SDP16_18)" \
 	bash scripts/gowin-build.sh
 
 gowin-fmax: gowin-build

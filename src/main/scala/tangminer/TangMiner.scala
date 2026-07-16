@@ -2187,7 +2187,6 @@ object UnrolledPipelineRound {
 }
 
 class BitcoinHashUnrolledFirstPass extends Component {
-  addAttribute("syn_srlstyle", "distributed_ram")
   val io = new Bundle {
     val clear = in Bool()
     val validIn = in Bool()
@@ -2241,7 +2240,6 @@ class BitcoinHashUnrolledFirstPass extends Component {
 }
 
 class BitcoinHashUnrolledSecondPass extends Component {
-  addAttribute("syn_srlstyle", "distributed_ram")
   val io = new Bundle {
     val clear = in Bool()
     val validIn = in Bool()

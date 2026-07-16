@@ -169,6 +169,10 @@ Dock USB-UART pins, and the `tangmega138k` openFPGALoader board definition.
 The constraint file selects the current Dock RX pin (`V14`); older Dock boards
 that route RX to `Y14` need that one pin changed in `constr/tangmega138k.cst`.
 
+Current implementation progress, synthesis evidence, routing diagnosis, and
+next steps are tracked in the
+[Tang Mega 138K bring-up status](docs/tang-mega-138k-status.md).
+
 Load a Gowin-built bitstream to SRAM and start the host miner:
 
 ```sh
