@@ -202,6 +202,60 @@ async def top_hashes_genesis_nonce_zero(dut):
     assert meets_target(expected_hash, expected_target)
 
 
+@cocotb.test(skip=not (HOST_ROUND_SKIP_PAYLOAD and FIXED_CANDIDATE_MODE == "2"))
+async def top_stops_before_active_host_round_skip_job_replacement(dut):
+    await _start_clock(dut)
+
+    running_signal = _resolve_signal(
+        dut,
+        "coreArea_runningAny",
+        "runningAny",
+    )
+    nonce_signal = _resolve_signal(
+        dut,
+        "current_nonce",
+        "coreArea_currentNonce",
+    )
+
+    initial_job = build_job_from_header(GENESIS_HEADER, b"\x00" * 32)
+    await _uart_write(dut, b"TNJ" + _encode_payload(initial_job))
+
+    for _ in range(32):
+        if running_signal.value.is_resolvable and int(running_signal.value) == 1:
+            break
+        await RisingEdge(dut.clk)
+    assert int(running_signal.value) == 1
+
+    replacement_header = bytes([GENESIS_HEADER[0] ^ 1]) + GENESIS_HEADER[1:]
+    replacement_job = build_job_from_header(replacement_header, b"\x00" * 32)
+    replacement_payload = _encode_payload(replacement_job)
+
+    await _uart_write(dut, b"TNJ")
+    for _ in range(32):
+        if running_signal.value.is_resolvable and int(running_signal.value) == 0:
+            break
+        await RisingEdge(dut.clk)
+    assert int(running_signal.value) == 0
+    stopped_nonce = int(nonce_signal.value)
+
+    split = len(replacement_payload) // 2
+    for byte in replacement_payload[:split]:
+        await _uart_write_byte(dut, byte)
+        assert int(running_signal.value) == 0
+        assert int(nonce_signal.value) == stopped_nonce
+        assert int(dut.uart_tx_pin.value) == 1
+
+    await _uart_write(dut, replacement_payload[split:])
+    for _ in range(32):
+        if running_signal.value.is_resolvable and int(running_signal.value) == 1:
+            break
+        await RisingEdge(dut.clk)
+    assert int(running_signal.value) == 1
+    assert int(nonce_signal.value) < stopped_nonce
+
+    await _uart_write(dut, b"TNS")
+
+
 @cocotb.test(skip=HOST_ROUND_SKIP_PAYLOAD)
 async def top_hashes_genesis_nonce_three(dut):
     await _start_clock(dut)

@@ -27,6 +27,7 @@ case class TangMinerHardwareOptions(
   enableHardcodedJob: Boolean = true,
   fixedCandidateMode: Option[Int] = None,
   fullyUnrolled: Boolean = false,
+  unrolledDelayStyle: String = "auto",
   wideLaneBlock: Boolean = false,
   registerPassOutputs: Boolean = false,
   registerCompressorOutputs: Boolean = false,
@@ -48,6 +49,10 @@ case class TangMinerHardwareOptions(
 ) {
   fixedCandidateMode.foreach(mode =>
     require(mode >= 0 && mode <= 5, s"fixedCandidateMode must be 0..5, got $mode")
+  )
+  require(
+    Set("auto", "registers", "distributed_ram", "block_ram").contains(unrolledDelayStyle),
+    s"unrolledDelayStyle must be auto, registers, distributed_ram, or block_ram; got $unrolledDelayStyle"
   )
   require(!(twoCycleRound && threeCycleRound), "twoCycleRound and threeCycleRound are mutually exclusive")
   require(!(twoRoundsPerCycle && (twoCycleRound || threeCycleRound)), "twoRoundsPerCycle cannot be combined with multi-cycle round modes")
@@ -2135,14 +2140,13 @@ object BitcoinCandidateFilter {
   }
 }
 
-case class UnrolledPipelineStage(state: Seq[UInt], schedule: Seq[UInt], valid: Bool, nonce: UInt)
+case class UnrolledPipelineStage(state: Seq[UInt], schedule: Seq[UInt])
 
 object UnrolledPipelineRound {
   def register(
     input: UnrolledPipelineStage,
     roundIndex: Int,
-    scheduleRequired: Boolean,
-    clearPipeline: Bool
+    scheduleRequired: Boolean
   ): UnrolledPipelineStage = {
     val a = input.state(0)
     val b = input.state(1)
@@ -2174,31 +2178,24 @@ object UnrolledPipelineRound {
     val nextSchedule = input.schedule.drop(1) :+ generatedWord
     val stateRegs = nextState.map(RegNext(_))
     val scheduleRegs = nextSchedule.map(RegNext(_))
-    val validReg = Reg(Bool()) init False
-    val nonceReg = RegNext(input.nonce)
 
-    validReg := input.valid
-    when(clearPipeline) {
-      validReg := False
-    }
-
-    UnrolledPipelineStage(stateRegs, scheduleRegs, validReg, nonceReg)
+    UnrolledPipelineStage(stateRegs, scheduleRegs)
   }
 }
 
-class BitcoinHashUnrolledFirstPass extends Component {
+class BitcoinHashUnrolledFirstPass(delayStyle: String) extends Component {
+  if (delayStyle != "auto") {
+    addAttribute("syn_srlstyle", delayStyle)
+  }
+
   val io = new Bundle {
-    val clear = in Bool()
-    val validIn = in Bool()
     val midstate = in Bits(256 bits)
     val roundSkipPrefixState = in Bits(256 bits)
     val roundSkipTail2 = in UInt(32 bits)
     val roundSkipW16 = in UInt(32 bits)
     val roundSkipW17 = in UInt(32 bits)
     val nonceIn = in UInt(32 bits)
-    val validOut = out Bool()
     val digestOut = out Bits(256 bits)
-    val nonceOut = out UInt(32 bits)
   }
 
   val firstPadStart = U(BigInt("80000000", 16), 32 bits)
@@ -2209,16 +2206,13 @@ class BitcoinHashUnrolledFirstPass extends Component {
   val firstInput = UnrolledPipelineStage(
     (0 until 8).map(i => Sha256.wordFromDigest(io.roundSkipPrefixState, i)),
     Seq(io.nonceIn, firstPadStart) ++ Seq.fill(10)(zero) ++
-      Seq(firstLength, io.roundSkipW16, io.roundSkipW17, w18),
-    io.validIn,
-    io.nonceIn
+      Seq(firstLength, io.roundSkipW16, io.roundSkipW17, w18)
   )
   val firstRounds = (3 to 63).foldLeft(firstInput) { (stage, roundIndex) =>
     UnrolledPipelineRound.register(
       stage,
       roundIndex,
-      scheduleRequired = roundIndex <= 47,
-      io.clear
+      scheduleRequired = roundIndex <= 47
     )
   }
 
@@ -2227,26 +2221,17 @@ class BitcoinHashUnrolledFirstPass extends Component {
     Sha256.concatWords(firstRounds.state)
   )
   val digestReg = RegNext(digestNext)
-  val digestValidReg = Reg(Bool()) init False
-  val digestNonceReg = RegNext(firstRounds.nonce)
-  digestValidReg := firstRounds.valid
-  when(io.clear) {
-    digestValidReg := False
-  }
 
-  io.validOut := digestValidReg
   io.digestOut := digestReg
-  io.nonceOut := digestNonceReg
 }
 
-class BitcoinHashUnrolledSecondPass extends Component {
+class BitcoinHashUnrolledSecondPass(delayStyle: String) extends Component {
+  if (delayStyle != "auto") {
+    addAttribute("syn_srlstyle", delayStyle)
+  }
+
   val io = new Bundle {
-    val clear = in Bool()
-    val validIn = in Bool()
     val digestIn = in Bits(256 bits)
-    val nonceIn = in UInt(32 bits)
-    val validOut = out Bool()
-    val nonceOut = out UInt(32 bits)
     val candidateLow32 = out UInt(32 bits)
   }
 
@@ -2255,29 +2240,18 @@ class BitcoinHashUnrolledSecondPass extends Component {
     Sha256.Iv.map(Sha256.word),
     (0 until 8).map(i => Sha256.wordFromDigest(io.digestIn, i)) ++
       Seq(U(BigInt("80000000", 16), 32 bits)) ++ Seq.fill(6)(zero) ++
-      Seq(U(BigInt("00000100", 16), 32 bits)),
-    io.validIn,
-    io.nonceIn
+      Seq(U(BigInt("00000100", 16), 32 bits))
   )
   val secondRounds = (0 to 60).foldLeft(secondInput) { (stage, roundIndex) =>
     UnrolledPipelineRound.register(
       stage,
       roundIndex,
-      scheduleRequired = roundIndex <= 44,
-      io.clear
+      scheduleRequired = roundIndex <= 44
     )
   }
 
-  val candidateValidReg = Reg(Bool()) init False
-  val candidateNonceReg = RegNext(secondRounds.nonce)
   val candidateLow32Reg = RegNext(secondRounds.state(4))
-  candidateValidReg := secondRounds.valid
-  when(io.clear) {
-    candidateValidReg := False
-  }
 
-  io.validOut := candidateValidReg
-  io.nonceOut := candidateNonceReg
   io.candidateLow32 := candidateLow32Reg
 }
 
@@ -2312,13 +2286,17 @@ class BitcoinHashUnrolledPipeline(options: TangMinerHardwareOptions) extends Com
   val foundReg = Reg(Bool()) init False
   val foundNonceReg = Reg(UInt(32 bits)) init 0
   val currentNonceReg = Reg(UInt(32 bits)) init 0
+  val PipelineLatency = 124
+  val PipelineFillBits = log2Up(PipelineLatency + 1)
+  val pipelineFillReg = Reg(UInt(PipelineFillBits bits)) init 0
+  val resultNonceReg = Reg(UInt(32 bits)) init 0
+  val pipelineFilled = pipelineFillReg === U(PipelineLatency, PipelineFillBits bits)
+  val candidateValid = runningReg && pipelineFilled
   val candidateMeetsTarget = Bool()
   val clearPipeline = io.reset || io.start || io.stop
   val injectValid = runningReg && !candidateMeetsTarget && !clearPipeline
 
-  val firstPass = new BitcoinHashUnrolledFirstPass
-  firstPass.io.clear := clearPipeline
-  firstPass.io.validIn := injectValid
+  val firstPass = new BitcoinHashUnrolledFirstPass(options.unrolledDelayStyle)
   firstPass.io.midstate := io.midstate
   firstPass.io.roundSkipPrefixState := io.roundSkipPrefixState
   firstPass.io.roundSkipTail2 := io.roundSkipTail2
@@ -2326,13 +2304,10 @@ class BitcoinHashUnrolledPipeline(options: TangMinerHardwareOptions) extends Com
   firstPass.io.roundSkipW17 := io.roundSkipW17
   firstPass.io.nonceIn := currentNonceReg
 
-  val secondPass = new BitcoinHashUnrolledSecondPass
-  secondPass.io.clear := clearPipeline
-  secondPass.io.validIn := firstPass.io.validOut
+  val secondPass = new BitcoinHashUnrolledSecondPass(options.unrolledDelayStyle)
   secondPass.io.digestIn := firstPass.io.digestOut
-  secondPass.io.nonceIn := firstPass.io.nonceOut
 
-  candidateMeetsTarget := secondPass.io.validOut && runningReg &&
+  candidateMeetsTarget := candidateValid &&
     BitcoinCandidateFilter.meets(
       options,
       io.candidateMode,
@@ -2344,21 +2319,33 @@ class BitcoinHashUnrolledPipeline(options: TangMinerHardwareOptions) extends Com
     foundReg := False
     foundNonceReg := 0
     currentNonceReg := 0
+    pipelineFillReg := 0
+    resultNonceReg := 0
   } otherwise {
     when(io.stop) {
       runningReg := False
       foundReg := False
+      pipelineFillReg := 0
     } elsewhen(io.start) {
       runningReg := True
       foundReg := False
       foundNonceReg := 0
       currentNonceReg := io.startNonce
+      pipelineFillReg := 0
+      resultNonceReg := io.startNonce
     } elsewhen(candidateMeetsTarget) {
       runningReg := False
       foundReg := True
-      foundNonceReg := secondPass.io.nonceOut
+      foundNonceReg := resultNonceReg
+      pipelineFillReg := 0
     } elsewhen(injectValid) {
       currentNonceReg := currentNonceReg + io.nonceStride
+      when(!pipelineFilled) {
+        pipelineFillReg := pipelineFillReg + 1
+      }
+      when(candidateValid) {
+        resultNonceReg := resultNonceReg + io.nonceStride
+      }
     }
   }
 
@@ -2367,8 +2354,8 @@ class BitcoinHashUnrolledPipeline(options: TangMinerHardwareOptions) extends Com
   io.foundNonce := foundNonceReg
   io.currentNonce := currentNonceReg
   io.nonceAttempt := injectValid
-  io.candidateValid := secondPass.io.validOut
-  io.candidateNonce := secondPass.io.nonceOut
+  io.candidateValid := candidateValid
+  io.candidateNonce := resultNonceReg
   io.candidateLow32 := secondPass.io.candidateLow32
 }
 
@@ -3393,11 +3380,6 @@ class Top(
       if (splitShaClock) {
         splitStopPending := False
       }
-      midstate := 0
-      tail := 0
-      if (hardwareOptions.hostRoundSkip) {
-        hostRoundSkipPrefixState := 0
-      }
       if (hardwareOptions.enableEcho) {
         target := 0
         echoToggle := False
@@ -3461,6 +3443,11 @@ class Top(
               coreStartPending := True
               rxState := RxState.sync0
             } elsewhen(acceptsJobPayload) {
+              if (hardwareOptions.hostRoundSkip) {
+                when(rx.io.data === B"8'h4a") {
+                  coreStop := True
+                }
+              }
               if (useTargetAliases) {
                 targetIsAllOnes := True
                 targetIsQuick3 := True
@@ -3767,6 +3754,10 @@ object GenerateVerilog extends App {
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"), Some(2)),
     fullyUnrolled = envBoolean("TANGMINER_FULLY_UNROLLED", default = false) ||
       envBoolean("SPINAL_FULLY_UNROLLED", default = false),
+    unrolledDelayStyle = envString(
+      Seq("TANGMINER_UNROLLED_DELAY_STYLE", "SPINAL_UNROLLED_DELAY_STYLE"),
+      "auto"
+    ),
     wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
     registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),
@@ -3849,6 +3840,10 @@ object GenerateSimVerilog extends App {
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE")),
     fullyUnrolled = envBoolean("TANGMINER_FULLY_UNROLLED", default = false) ||
       envBoolean("SPINAL_FULLY_UNROLLED", default = false),
+    unrolledDelayStyle = envString(
+      Seq("TANGMINER_UNROLLED_DELAY_STYLE", "SPINAL_UNROLLED_DELAY_STYLE"),
+      "auto"
+    ),
     wideLaneBlock = envBoolean("TANGMINER_WIDE_LANES", default = false) || envBoolean("SPINAL_WIDE_LANES", default = false),
     registerPassOutputs = envBoolean("TANGMINER_REGISTER_PASS_OUTPUTS", default = false) ||
       envBoolean("SPINAL_REGISTER_PASS_OUTPUTS", default = false),

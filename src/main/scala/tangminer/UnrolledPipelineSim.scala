@@ -28,34 +28,41 @@ class BitcoinHashUnrolledPipelineSimTop extends Component {
     val candidateLow32 = out UInt(32 bits)
   }
 
-  val pipeline = new BitcoinHashUnrolledPipeline(
-    TangMinerHardwareOptions(
-      fixedCandidateMode = Some(4),
-      roundSkip = true,
-      hostRoundSkip = true,
-      fullyUnrolled = true
+  def makePipeline(fixedCandidateMode: Int): BitcoinHashUnrolledPipeline =
+    new BitcoinHashUnrolledPipeline(
+      TangMinerHardwareOptions(
+        fixedCandidateMode = Some(fixedCandidateMode),
+        roundSkip = true,
+        hostRoundSkip = true,
+        fullyUnrolled = true
+      )
     )
-  )
 
-  pipeline.io.reset := io.reset
-  pipeline.io.start := io.start
-  pipeline.io.stop := io.stop
-  pipeline.io.midstate := io.midstate
-  pipeline.io.candidateMode := io.candidateMode
-  pipeline.io.roundSkipPrefixState := io.roundSkipPrefixState
-  pipeline.io.roundSkipTail2 := io.roundSkipTail2
-  pipeline.io.roundSkipW16 := io.roundSkipW16
-  pipeline.io.roundSkipW17 := io.roundSkipW17
-  pipeline.io.startNonce := io.startNonce
-  pipeline.io.nonceStride := io.nonceStride
-  io.running := pipeline.io.running
-  io.found := pipeline.io.found
-  io.foundNonce := pipeline.io.foundNonce
-  io.currentNonce := pipeline.io.currentNonce
-  io.nonceAttempt := pipeline.io.nonceAttempt
-  io.candidateValid := pipeline.io.candidateValid
-  io.candidateNonce := pipeline.io.candidateNonce
-  io.candidateLow32 := pipeline.io.candidateLow32
+  val quick26Pipeline = makePipeline(4)
+  val alwaysPipeline = makePipeline(0)
+  Seq(quick26Pipeline, alwaysPipeline).foreach { pipeline =>
+    pipeline.io.reset := io.reset
+    pipeline.io.start := io.start
+    pipeline.io.stop := io.stop
+    pipeline.io.midstate := io.midstate
+    pipeline.io.candidateMode := io.candidateMode
+    pipeline.io.roundSkipPrefixState := io.roundSkipPrefixState
+    pipeline.io.roundSkipTail2 := io.roundSkipTail2
+    pipeline.io.roundSkipW16 := io.roundSkipW16
+    pipeline.io.roundSkipW17 := io.roundSkipW17
+    pipeline.io.startNonce := io.startNonce
+    pipeline.io.nonceStride := io.nonceStride
+  }
+
+  val selectAlways = io.candidateMode === U(0, 3 bits)
+  io.running := Mux(selectAlways, alwaysPipeline.io.running, quick26Pipeline.io.running)
+  io.found := Mux(selectAlways, alwaysPipeline.io.found, quick26Pipeline.io.found)
+  io.foundNonce := Mux(selectAlways, alwaysPipeline.io.foundNonce, quick26Pipeline.io.foundNonce)
+  io.currentNonce := Mux(selectAlways, alwaysPipeline.io.currentNonce, quick26Pipeline.io.currentNonce)
+  io.nonceAttempt := Mux(selectAlways, alwaysPipeline.io.nonceAttempt, quick26Pipeline.io.nonceAttempt)
+  io.candidateValid := Mux(selectAlways, alwaysPipeline.io.candidateValid, quick26Pipeline.io.candidateValid)
+  io.candidateNonce := Mux(selectAlways, alwaysPipeline.io.candidateNonce, quick26Pipeline.io.candidateNonce)
+  io.candidateLow32 := Mux(selectAlways, alwaysPipeline.io.candidateLow32, quick26Pipeline.io.candidateLow32)
 }
 
 object GenerateUnrolledPipelineSimVerilog extends App {

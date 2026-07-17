@@ -15,6 +15,8 @@ from tangminer_emulator import (
 
 MASK32 = 0xFFFFFFFF
 SHA256_IV7 = 0x5BE0CD19
+CANDIDATE_ALWAYS = 0
+CANDIDATE_QUICK26 = 4
 
 # The engine registers 61 first-pass rounds, one feed-forward boundary, 61
 # second-pass rounds, and the externally visible candidate. A start pulse
@@ -72,10 +74,16 @@ def _job_fields(header_prefix: bytes):
     }
 
 
-async def _drive_job(dut, header_prefix: bytes, start_nonce: int, stride: int):
+async def _drive_job(
+    dut,
+    header_prefix: bytes,
+    start_nonce: int,
+    stride: int,
+    candidate_mode: int = CANDIDATE_QUICK26,
+):
     for name, value in _job_fields(header_prefix).items():
         getattr(dut, name).value = value
-    dut.candidateMode.value = 4
+    dut.candidateMode.value = candidate_mode
     dut.startNonce.value = start_nonce & MASK32
     dut.nonceStride.value = stride & MASK32
 
@@ -141,9 +149,21 @@ async def _collect_contiguous(
         nonce = (nonce + stride) & MASK32
 
 
-async def _start_job_and_wait(dut, header_prefix: bytes, start_nonce: int, stride: int):
+async def _start_job_and_wait(
+    dut,
+    header_prefix: bytes,
+    start_nonce: int,
+    stride: int,
+    candidate_mode: int = CANDIDATE_QUICK26,
+):
     await _leave_read_only()
-    await _drive_job(dut, header_prefix, start_nonce, stride)
+    await _drive_job(
+        dut,
+        header_prefix,
+        start_nonce,
+        stride,
+        candidate_mode=candidate_mode,
+    )
     valid_at_start, _ = await _pulse(dut, dut.start)
     assert valid_at_start == 0, "start/job replacement did not flush an old candidate"
     await _wait_for_first_candidate(dut, EXPECTED_START_TO_FIRST_CANDIDATE)
@@ -157,7 +177,7 @@ async def unrolled_pipeline_is_bit_exact_and_flushes_control_events(dut):
     dut.start.value = 0
     dut.stop.value = 0
     dut.midstate.value = 0
-    dut.candidateMode.value = 4
+    dut.candidateMode.value = CANDIDATE_QUICK26
     dut.roundSkipPrefixState.value = 0
     dut.roundSkipTail2.value = 0
     dut.roundSkipW16.value = 0
@@ -236,3 +256,51 @@ async def unrolled_pipeline_is_bit_exact_and_flushes_control_events(dut):
         wrap_stride,
         count=10,
     )
+
+    # Always-match mode deterministically exercises the found-stop path. The
+    # matching result suppresses the next attempt immediately; found latches on
+    # the following edge and invalidates any stale in-flight result metadata.
+    found_start = 0xA5A55A5A
+    found_stride = 11
+    assert not _quick26_matches(genesis_prefix, found_start), (
+        "always-match vector unexpectedly also matches quick-26"
+    )
+    await _start_job_and_wait(
+        dut,
+        genesis_prefix,
+        found_start,
+        found_stride,
+        candidate_mode=CANDIDATE_ALWAYS,
+    )
+    _check_candidate(dut, genesis_prefix, found_start)
+    assert int(dut.found.value) == 0, "found asserted before the match edge"
+    assert int(dut.running.value) == 1, "pipeline stopped before registering found"
+    assert int(dut.nonceAttempt.value) == 0, "match did not stop new nonce attempts"
+
+    stopped_current_nonce = (
+        found_start + PIPELINE_REGISTER_STAGES * found_stride
+    ) & MASK32
+    assert int(dut.currentNonce.value) == stopped_current_nonce, (
+        "currentNonce is not the next unattempted nonce at the match"
+    )
+
+    await _sample_edge(dut)
+    assert int(dut.candidateValid.value) == 0, (
+        "found did not invalidate stale in-flight candidate metadata"
+    )
+    assert int(dut.found.value) == 1, "found did not latch after the match"
+    assert int(dut.foundNonce.value) == found_start, "foundNonce missed the match"
+    assert int(dut.running.value) == 0, "pipeline kept running after found"
+    assert int(dut.nonceAttempt.value) == 0, "nonce attempt continued after found"
+    assert int(dut.currentNonce.value) == stopped_current_nonce, (
+        "currentNonce advanced after found"
+    )
+
+    for _ in range(8):
+        await _sample_edge(dut)
+        assert int(dut.candidateValid.value) == 0
+        assert int(dut.found.value) == 1
+        assert int(dut.foundNonce.value) == found_start
+        assert int(dut.running.value) == 0
+        assert int(dut.nonceAttempt.value) == 0
+        assert int(dut.currentNonce.value) == stopped_current_nonce
