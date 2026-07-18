@@ -66,6 +66,52 @@ static void compress(uint32_t state[8], const uint8_t block[64]) {
     state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
+void stratum_sha256_host_round_skip_payload(
+    const uint8_t midstate[32], const uint8_t tail[12], uint8_t out[44]) {
+    const uint32_t tail0 = read_be32(tail);
+    const uint32_t tail1 = read_be32(tail + 4);
+    const uint32_t tail2 = read_be32(tail + 8);
+    const uint32_t first_length = 80U * 8U;
+    const uint32_t w16_s0 = rotr(tail1, 7) ^ rotr(tail1, 18) ^ (tail1 >> 3);
+    const uint32_t w17_s0 = rotr(tail2, 7) ^ rotr(tail2, 18) ^ (tail2 >> 3);
+    const uint32_t w17_s1 = rotr(first_length, 17) ^ rotr(first_length, 19) ^ (first_length >> 10);
+    const uint32_t w16 = w16_s0 + tail0;
+    const uint32_t w17 = w17_s1 + w17_s0 + tail1;
+    const uint32_t words[3] = {tail0, tail1, tail2};
+    uint32_t state[8];
+
+    for (size_t i = 0; i < 8; ++i) {
+        state[i] = read_be32(midstate + i * 4U);
+    }
+
+    uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
+    uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
+    for (size_t i = 0; i < 3; ++i) {
+        const uint32_t s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+        const uint32_t ch = (e & f) ^ (~e & g);
+        const uint32_t t1 = h + s1 + ch + K[i] + words[i];
+        const uint32_t s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        const uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        const uint32_t t2 = s0 + maj;
+        h = g;
+        g = f;
+        f = e;
+        e = d + t1;
+        d = c;
+        c = b;
+        b = a;
+        a = t1 + t2;
+    }
+
+    write_be32(out, tail2);
+    write_be32(out + 4, w16);
+    write_be32(out + 8, w17);
+    const uint32_t prefix_state[8] = {a, b, c, d, e, f, g, h};
+    for (size_t i = 0; i < 8; ++i) {
+        write_be32(out + 12 + i * 4U, prefix_state[i]);
+    }
+}
+
 static void sha256_full(const uint8_t* data, size_t len, uint8_t out[32]) {
     uint32_t state[8];
     uint8_t block[64];

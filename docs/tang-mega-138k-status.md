@@ -26,9 +26,9 @@ Each lane starts a nonce every 61 clocks, giving a modeled aggregate rate of
 
 `build/gowin/tangminer_mega138k_iterative16_50m_p0r2` was generated immediately
 before commit `12e2b41`. It closes at 53.763 MHz and passed 100/100 strict
-`quick21` jobs after SRAM loading. Every returned nonce met the requested
-target when recomputed by the host, with a valid `TNC` counter response for
-every job.
+`quick21` jobs after SRAM loading, then another 100/100 after persistent
+flash programming. Every returned nonce met the requested target when
+recomputed by the host, with a valid `TNC` counter response for every job.
 
 This is useful hardware evidence, but it is not reproducible from the current
 RTL and must not be treated as the default build.

@@ -46,6 +46,7 @@ static void usage(const char* prog) {
             "usage: %s --host HOST --port PORT --user USER [--pass PASS]\n"
             "       [--serial-port PORT] [--serial-baud BAUD] [--serial-timeout-ms MS]\n"
             "       [--fpga-target quick23|quick21|quick26|quick14|quick3]\n"
+            "       [--host-round-skip]\n"
             "       [--suggest-difficulty N] [--miner-name NAME] [--no-submit] [--quiet]\n",
             prog);
 }
@@ -320,6 +321,8 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "invalid fpga target\n");
                 return 2;
             }
+        } else if (strcmp(argv[i], "--host-round-skip") == 0) {
+            state.builder.host_round_skip = true;
         } else if (strcmp(argv[i], "--no-submit") == 0) {
             state.submit = false;
         } else if (strcmp(argv[i], "--quiet") == 0) {

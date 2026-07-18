@@ -17,6 +17,7 @@ hardware_difficulty="${HARDWARE_SUGGEST_DIFFICULTY:-0.009539}"
 hardware_clock_mhz="${HARDWARE_CLOCK_MHZ:-${SPINAL_CLOCK_MHZ:-67.500}}"
 hardware_lanes="${HARDWARE_LANES:-${SPINAL_LANES:-6}}"
 hardware_lane_period_cycles="${HARDWARE_LANE_PERIOD_CYCLES:-${SPINAL_LANE_PERIOD_CYCLES:-65}}"
+hardware_host_round_skip="${HARDWARE_HOST_ROUND_SKIP:-0}"
 hardware_baseline_mhs="${HARDWARE_BASELINE_MHS:-4.21875}"
 max_nonces="${SOFTWARE_MAX_NONCES:-100000}"
 
@@ -55,7 +56,7 @@ environment overrides:
   STRATUM_HOST, STRATUM_PORT, STRATUM_USER, STRATUM_PASS
   SOFTWARE_FPGA_TARGET, SOFTWARE_SUGGEST_DIFFICULTY, SOFTWARE_MAX_NONCES
   RTL_FPGA_TARGET, RTL_SUGGEST_DIFFICULTY, RTL_BENCHMARK_SECONDS, RTL_TARGET_SHARES_PER_MINUTE
-  HARDWARE_FPGA_TARGET, HARDWARE_SUGGEST_DIFFICULTY, SERIAL_PORT
+  HARDWARE_FPGA_TARGET, HARDWARE_SUGGEST_DIFFICULTY, HARDWARE_HOST_ROUND_SKIP, SERIAL_PORT
   HARDWARE_CLOCK_MHZ, HARDWARE_LANES, HARDWARE_LANE_PERIOD_CYCLES
   NO_SUBMIT=1, VERBOSE=1
 EOF
@@ -99,6 +100,7 @@ run_client() {
   local target="$1"
   local difficulty="$2"
   local port_path="$3"
+  local host_round_skip="${4:-0}"
   local args=(
     "$client"
     --host "$host"
@@ -114,6 +116,9 @@ run_client() {
   fi
   if [ "${NO_SUBMIT:-0}" = "1" ]; then
     args+=(--no-submit)
+  fi
+  if [ "$host_round_skip" = "1" ]; then
+    args+=(--host-round-skip)
   fi
   "${args[@]}"
 }
@@ -155,7 +160,7 @@ case "$mode" in
     echo "fake_fpga_pid=$fake_fpga_pid"
     echo "fake_fpga_pty=$serial_port"
     echo "software_target=$software_target suggested_difficulty=$software_difficulty"
-    run_client "$software_target" "$software_difficulty" "$serial_port"
+    run_client "$software_target" "$software_difficulty" "$serial_port" 0
     ;;
   rtl)
     if [ ! -x build/verilator-pty/Vtop ]; then
@@ -185,7 +190,7 @@ case "$mode" in
     echo "rtl_fpga_pid=$rtl_fpga_pid"
     echo "rtl_fpga_pty=$serial_port"
     echo "rtl_target=$rtl_target suggested_difficulty=$rtl_difficulty"
-    run_client "$rtl_target" "$rtl_difficulty" "$serial_port"
+    run_client "$rtl_target" "$rtl_difficulty" "$serial_port" 0
     ;;
   hardware)
     if [ -z "$serial_port" ]; then
@@ -194,8 +199,9 @@ case "$mode" in
     fi
     echo "hardware_port=$serial_port"
     echo "hardware_target=$hardware_target suggested_difficulty=$hardware_difficulty"
+    echo "hardware_host_round_skip=$hardware_host_round_skip"
     print_modeled_hashrate "$hardware_clock_mhz" "$hardware_lanes" "$hardware_lane_period_cycles" "$hardware_baseline_mhs"
-    run_client "$hardware_target" "$hardware_difficulty" "$serial_port"
+    run_client "$hardware_target" "$hardware_difficulty" "$serial_port" "$hardware_host_round_skip"
     ;;
   *)
     usage >&2

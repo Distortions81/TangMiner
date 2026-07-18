@@ -17,6 +17,7 @@ from make_job import (
     target_difficulty,
     words_to_bytes,
 )
+from tangminer_emulator import build_job_from_header, encode_host_round_skip_payload
 
 
 GENESIS_HEADER = bytes.fromhex(
@@ -29,7 +30,10 @@ GENESIS_HEADER = bytes.fromhex(
 )
 
 
-def make_packet(header, target, command=b"J"):
+def make_packet(header, target, command=b"J", host_round_skip=False):
+    if host_round_skip:
+        payload = encode_host_round_skip_payload(build_job_from_header(header, target))
+        return b"TN" + command + payload
     midstate = words_to_bytes(compress(IV, header[:64]))
     tail = header[64:76]
     return b"TN" + command + midstate + tail + target
@@ -79,6 +83,11 @@ def main():
     parser.add_argument("--echo", action="store_true", help="ask FPGA to echo the parsed job instead of hashing")
     parser.add_argument("--counter", action="store_true", help="query and print the FPGA nonce-attempt counter")
     parser.add_argument("--hardcoded", action="store_true", help="ask FPGA to run its built-in genesis nonce-zero job")
+    parser.add_argument(
+        "--host-round-skip",
+        action="store_true",
+        help="send tail2, w16, w17, and the round-0..2 prefix state for host-round-skip RTL",
+    )
     parser.add_argument("--count", type=int, default=1, help="number of hash jobs to run; use 0 to run until interrupted")
     parser.add_argument("--watch", action="store_true", help="keep sending fresh smoke jobs and printing candidates")
     parser.add_argument(
@@ -91,7 +100,7 @@ def main():
     ports = args.ports or sorted(glob.glob("/dev/cu.usbserial-*"))
     target = parse_target(args.target)
     validation_target = ALL_ONES_TARGET if args.hardcoded else target
-    expected_payload = make_packet(GENESIS_HEADER, target)[3:]
+    expected_payload = make_packet(GENESIS_HEADER, target, host_round_skip=args.host_round_skip)[3:]
     response_len = 77 if args.echo else 5
     total_jobs = None if args.watch or args.count == 0 else max(args.count, 1)
 
@@ -111,7 +120,12 @@ def main():
                     return
 
                 if args.echo:
-                    packet = make_packet(GENESIS_HEADER, target, b"E")
+                    packet = make_packet(
+                        GENESIS_HEADER,
+                        target,
+                        b"E",
+                        host_round_skip=args.host_round_skip,
+                    )
                     print(f"packet_len={len(packet)}")
                     ser.write(packet)
                     ser.flush()
@@ -134,7 +148,11 @@ def main():
                 try:
                     while total_jobs is None or job_index < total_jobs:
                         header = GENESIS_HEADER if args.hardcoded else header_for_job(job_index)
-                        packet = b"TNH" if args.hardcoded else make_packet(header, target)
+                        packet = (
+                            b"TNH"
+                            if args.hardcoded
+                            else make_packet(header, target, host_round_skip=args.host_round_skip)
+                        )
                         ser.write(packet)
                         ser.flush()
                         response = read_response(ser, response_len)

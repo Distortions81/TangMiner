@@ -26,7 +26,7 @@ Default target:
 Tang Mega 138K diagnostic:
 
 - A pre-commit 16-lane iterative artifact at 50 MHz passed 100/100 strict
-  `quick21` jobs on 2026-07-18 and models at `13.115 MH/s`.
+  `quick21` jobs from SRAM and another 100/100 after persistent flash. It models at `13.115 MH/s`.
 - Rebuilding the same nominal settings from current RTL closes at 57.601 MHz
   but returned 88/88 false-positive candidates. It is hardware-rejected and is
   not the default.

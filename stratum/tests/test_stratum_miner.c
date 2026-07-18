@@ -56,6 +56,23 @@ static void test_sha256d_genesis_nonce_zero(void) {
           "genesis nonce-zero sha256d");
 }
 
+static void test_sha256_host_round_skip_payload(void) {
+    static const uint8_t expected[44] = {
+        0xff, 0xff, 0x00, 0x1d, 0x8b, 0xd2, 0xd5, 0x87,
+        0x0e, 0xc2, 0xc1, 0x45, 0xde, 0x84, 0x59, 0x10,
+        0x1f, 0x8a, 0xee, 0x5c, 0xb7, 0xf8, 0x88, 0xdf,
+        0xbc, 0x90, 0x9a, 0x33, 0x23, 0x89, 0x56, 0xe3,
+        0xaf, 0x5e, 0x1c, 0xba, 0xa8, 0xa8, 0x88, 0x1c,
+        0xc3, 0xc8, 0xd8, 0xe9,
+    };
+    uint8_t midstate[32];
+    uint8_t payload[44];
+
+    stratum_sha256_midstate(GENESIS_HEADER_NONCE_ZERO, midstate);
+    stratum_sha256_host_round_skip_payload(midstate, GENESIS_HEADER_NONCE_ZERO + 64, payload);
+    check(memcmp(payload, expected, sizeof(expected)) == 0, "genesis host-round-skip payload");
+}
+
 static void test_genesis_share_validation_and_nonce_submit_hex(void) {
     tangminer_work_t work;
     uint8_t hash[32];
@@ -119,10 +136,20 @@ static void test_work_builder_packet_and_validation(void) {
           "candidate hash fixture");
     check(!meets_share, "candidate does not meet mock share target");
     check(!meets_block, "candidate does not meet mock block target");
+
+    tangminer_builder_init(&builder);
+    check(tangminer_builder_set_extranonce(&builder, "abcd", 4), "set host-round-skip extranonce");
+    builder.host_round_skip = true;
+    check(tangminer_build_work(&builder, &notify, &work), "build host-round-skip work");
+    uint8_t expected_round_skip[44];
+    stratum_sha256_host_round_skip_payload(work.packet + 3, work.header + 64, expected_round_skip);
+    check(memcmp(work.packet + 35, expected_round_skip, sizeof(expected_round_skip)) == 0,
+          "builder emits host-round-skip payload");
 }
 
 int main(void) {
     test_sha256d_genesis_nonce_zero();
+    test_sha256_host_round_skip_payload();
     test_genesis_share_validation_and_nonce_submit_hex();
     test_work_builder_packet_and_validation();
     return failures == 0 ? 0 : 1;

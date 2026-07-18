@@ -28,6 +28,7 @@ typedef struct {
     uint32_t extranonce2_size;
     uint8_t extranonce2[TANGMINER_MAX_EXTRANONCE2_LEN];
     uint8_t fpga_target[32];
+    bool host_round_skip;
     double difficulty;
     uint64_t jobs_built;
 } tangminer_builder_t;

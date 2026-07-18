@@ -311,8 +311,12 @@ bool tangminer_build_work(
     out->packet[1] = 'N';
     out->packet[2] = 'J';
     memcpy(out->packet + 3, midstate, 32);
-    memcpy(out->packet + 35, out->header + 64, 12);
-    memcpy(out->packet + 47, builder->fpga_target, 32);
+    if (builder->host_round_skip) {
+        stratum_sha256_host_round_skip_payload(midstate, out->header + 64, out->packet + 35);
+    } else {
+        memcpy(out->packet + 35, out->header + 64, 12);
+        memcpy(out->packet + 47, builder->fpga_target, 32);
+    }
     snprintf(out->job_id, sizeof(out->job_id), "%s", notify->job_id);
     snprintf(out->ntime, sizeof(out->ntime), "%s", notify->ntime);
     bytes_to_hex(builder->extranonce2, builder->extranonce2_size, out->extranonce2_hex, sizeof(out->extranonce2_hex));
