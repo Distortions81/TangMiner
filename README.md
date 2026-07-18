@@ -23,13 +23,15 @@ Default target:
   checks, with the hardware nonce-attempt counter queried over UART through
   `TNC`.
 
-Tang Mega 138K diagnostic:
+Tang Mega 138K default:
 
-- A pre-commit 16-lane iterative artifact at 50 MHz passed 100/100 strict
-  `quick21` jobs from SRAM and another 100/100 after persistent flash. It models at `13.115 MH/s`.
-- Rebuilding the same nominal settings from current RTL closes at 57.601 MHz
-  but returned 88/88 false-positive candidates. It is hardware-rejected and is
-  not the default.
+- The selected default is 28 iterative lanes at 50 MHz, local K constants, a
+  pass-output fence, and minimized SHA reset fanout. It models at `21.538 MH/s`
+  (28 lanes / 65 cycles) and passed 100/100 strict `quick21` jobs when loaded
+  to SRAM.
+- The default uses the validated Gowin place/route settings: place option 3,
+  route option 2, clock-route order 0, hold correction enabled, and resource
+  replication disabled.
 
 The selected 20K default is:
 
@@ -174,8 +176,8 @@ TARGET=tangmega138k scripts/flash-and-mine.sh --load /dev/ttyUSB1
 
 This target uses the `GW5AST-LV138PG484AC1/I0`, its 50 MHz board clock, the
 Dock USB-UART pins, and the `tangmega138k` openFPGALoader board definition.
-The 16-lane iterative configuration is still diagnostic: the retained older
-artifact validates on hardware, but a rebuild from current RTL does not.
+Its default is the hardware-validated 28-lane iterative configuration at
+50 MHz (modeled `21.538 MH/s`); it uses the legacy 115200-baud UART protocol.
 The constraint file selects the current Dock RX pin (`V14`); older Dock boards
 that route RX to `Y14` need that one pin changed in `constr/tangmega138k.cst`.
 

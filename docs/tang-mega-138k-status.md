@@ -1,61 +1,37 @@
 # Tang Mega 138K Bring-up Status
 
-Status as of 2026-07-18: a retained pre-commit 16-lane iterative artifact passes
-strict hardware validation, but rebuilding the same nominal configuration from
-current RTL fails hardware validation. There is not yet a reproducible selected
-138K image from the current source tree.
+Status as of 2026-07-18: the selected reproducible 138K build is an iterative
+28-lane design at 50 MHz. It is hardware-validated from SRAM with 100/100
+strict `quick21` jobs and is now the target default.
 
-## 16-lane Iterative Experiment
-
-The experiment uses:
+## Selected 28-lane Iterative Default
 
 ```text
 TARGET=tangmega138k
-SPINAL_LANES=16
+SPINAL_LANES=28
 SPINAL_CLOCK_PROFILE=50m
 SPINAL_FULLY_UNROLLED=0
-SPINAL_ROUND_SKIP=1
-SPINAL_HOST_ROUND_SKIP=1
+SPINAL_SHARED_K=0
+SPINAL_REGISTER_PASS_OUTPUTS=1
+SPINAL_MINIMIZE_SHA_RESET=1
+SPINAL_ROUND_SKIP=0
+SPINAL_HOST_ROUND_SKIP=0
 SPINAL_FIXED_CANDIDATE=2
+GOWIN_PLACE_OPTION=3
+GOWIN_ROUTE_OPTION=2
+GOWIN_CLOCK_ROUTE_ORDER=0
+GOWIN_CORRECT_HOLD=1
+GOWIN_REPLICATE_RESOURCES=0
 ```
 
-Each lane starts a nonce every 61 clocks, giving a modeled aggregate rate of
-`50,000,000 * 16 / 61 = 13.115 MH/s`.
+Each lane starts a nonce every 65 clocks, for a modeled aggregate rate of
+`50,000,000 * 28 / 65 = 21.538 MH/s`. The routed image closes at 50.124 MHz
+with no setup or hold violations and uses 76,221 logic cells, 50,881 registers,
+47,521 CLS, and 448 RAM16 primitives.
 
-### Retained pre-commit artifact
-
-`build/gowin/tangminer_mega138k_iterative16_50m_p0r2` was generated immediately
-before commit `12e2b41`. It closes at 53.763 MHz and passed 100/100 strict
-`quick21` jobs after SRAM loading, then another 100/100 after persistent
-flash programming. Every returned nonce met the requested target when
-recomputed by the host, with a valid `TNC` counter response for every job.
-
-This is useful hardware evidence, but it is not reproducible from the current
-RTL and must not be treated as the default build.
-
-### Current-RTL rebuild
-
-The current source was rebuilt with placer 3, router 2, clock-route order 0,
-hold correction enabled, and resource replication disabled. Gowin completed
-placement, routing, timing analysis, and bitstream generation.
-
-| Result | Value |
-| --- | ---: |
-| Actual Fmax | 57.601 MHz |
-| Setup-violated endpoints | 0 |
-| Hold-violated endpoints | 0 |
-| Logic | 53,978 / 138,240 (40%) |
-| Registers | 28,829 / 139,095 (21%) |
-| CLS | 31,037 / 69,120 (45%) |
-
-Despite clean static timing and passing strict RTL simulation, the SRAM-loaded
-image returned 88 false-positive candidates in 88 observed `quick21` jobs. It
-is hardware-rejected.
-
-The rebuilt mapping also differs materially from the retained valid artifact:
-the valid artifact used 43,552 logic cells and 256 RAM16 primitives, while the
-current rebuild uses 53,978 logic cells and no RAM16 primitives. That mapping
-change is a concrete lead for the hardware failure.
+The FPGA’s 115200-baud UART was strictly validated with 100/100 `quick21`
+jobs. Every returned nonce met the host-recomputed target. Faster UART images
+remain experimental until they respond and pass the same test reliably.
 
 ## Fully Unrolled Experiment
 

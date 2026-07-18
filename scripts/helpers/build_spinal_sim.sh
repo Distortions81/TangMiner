@@ -35,12 +35,14 @@ elif [[ "$target" = "tangnano20k" ]]; then
   default_register_pass_outputs=1
   default_minimize_sha_reset=1
 elif [[ "$target" = "tangmega138k" ]]; then
-  default_lanes=1
+  default_lanes=28
   default_pll_kind=gw5
   default_input_clock_mhz=50
-  default_fully_unrolled=1
-  default_round_skip=1
-  default_host_round_skip=1
+  default_fully_unrolled=0
+  default_register_pass_outputs=1
+  default_minimize_sha_reset=1
+  default_round_skip=0
+  default_host_round_skip=0
   default_fixed_candidate=2
 fi
 
