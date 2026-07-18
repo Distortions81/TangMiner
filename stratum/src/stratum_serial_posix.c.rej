@@ -1,0 +1,35 @@
+--- stratum/src/stratum_serial_posix.c
++++ stratum/src/stratum_serial_posix.c
+@@ -4,7 +4,32 @@
+ #include <fcntl.h>
+ #include <poll.h>
+ #include <string.h>
+ #include <termios.h>
++#include <time.h>
+ #include <unistd.h>
+ 
++static int64_t monotonic_milliseconds(void) {
++    struct timespec now;
++    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
++        return -1;
++    }
++    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
++}
++
++static int serial_write_all(tangminer_serial_t* serial, const uint8_t* bytes, size_t size) {
++    size_t written = 0;
++    while (written < size) {
++        const ssize_t rc = write(serial->fd, bytes + written, size - written);
++        if (rc < 0 && errno == EINTR) {
++            continue;
++        }
++        if (rc <= 0) {
++            return -1;
++        }
++        written += (size_t)rc;
++    }
++    (void)tcdrain(serial->fd);
++    return 0;
++}
++
+ static speed_t baud_to_speed(int baud) {

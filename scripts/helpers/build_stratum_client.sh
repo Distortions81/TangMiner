@@ -12,6 +12,7 @@ ldflags="${LDFLAGS:--pthread}"
 mkdir -p stratum/build
 
 sources=(
+  stratum/src/stratum_continuous.c
   stratum/src/stratum_client.c
   stratum/src/stratum_miner.c
   stratum/src/stratum_json.c
@@ -19,6 +20,7 @@ sources=(
   stratum/src/stratum_serial_posix.c
   stratum/src/stratum_sha256.c
   stratum/src/stratum_transport_posix.c
+  stratum/src/stratum_work_state.c
   stratum/src/stratum_cli.c
 )
 
@@ -45,4 +47,3 @@ else
     "$cc_bin" $ldflags "${objects[@]}" -o stratum/build/stratum-client
   fi
 fi
-

@@ -45,6 +45,7 @@ case class TangMinerHardwareOptions(
   balancedRoundAdder: Boolean = false,
   shareJobState: Boolean = false,
   hostRoundSkip: Boolean = false,
+  continuousResults: Boolean = false,
   externalRoundConstants: Boolean = false
 ) {
   fixedCandidateMode.foreach(mode =>
@@ -85,6 +86,12 @@ case class TangMinerHardwareOptions(
     "fullyUnrolled cannot be combined with iterative round-cycle modes")
   require(!(fullyUnrolled && (csaRound || csaSchedule || balancedRoundAdder)),
     "fullyUnrolled uses its dedicated fixed-index round datapath")
+  require(!continuousResults || !fullyUnrolled,
+    "continuousResults supports iterative cores only")
+  require(!continuousResults || !wideLaneBlock,
+    "continuousResults does not support wideLaneBlock")
+  require(!continuousResults || !hostRoundSkip,
+    "continuousResults does not support hostRoundSkip")
 }
 
 object GowinClockProfiles {
@@ -134,7 +141,14 @@ object NonceAttemptCounter {
     require(attempts.nonEmpty, "at least one nonce-attempt source is required")
 
     val incrementWidth = log2Up(attempts.length + 1)
-    val increment = attempts.map(_.asUInt.resize(incrementWidth)).reduce(_ + _).resize(incrementWidth)
+    var incrementLevel = attempts.map(_.asUInt.resize(incrementWidth))
+    while (incrementLevel.length > 1) {
+      incrementLevel = incrementLevel.grouped(2).map {
+        case Seq(left, right) => (left + right).resize(incrementWidth)
+        case Seq(single) => single
+      }.toSeq
+    }
+    val increment = incrementLevel.head
     val incrementReg = Reg(UInt(incrementWidth bits)) init 0
     val lowReg = Reg(UInt(32 bits)) init 0
     val highReg = Reg(UInt(32 bits)) init 0
@@ -1808,6 +1822,7 @@ class Sha256BitcoinFirstPassPrefix(
     w16Reg := 0
     w17Reg := 0
   } otherwise {
+    readyReg := False
     when(io.start) {
       a := io.midstate(255 downto 224).asUInt
       b := io.midstate(223 downto 192).asUInt
@@ -2364,6 +2379,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
     val reset = in Bool()
     val start = in Bool()
     val stop = in Bool()
+    val continuous = in Bool()
     val midstate = in Bits(256 bits)
     val tail = in Bits(96 bits)
     val candidateMode = in UInt(3 bits)
@@ -2405,6 +2421,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   val checkNonceReg = Reg(UInt(32 bits)) init 0
   val checkCandidateModeReg = Reg(UInt(3 bits)) init 3
   val foundNonceReg = Reg(UInt(32 bits)) init 0
+  val foundPulseReg = if (options.continuousResults) Reg(Bool()) init False else False
   val currentNonceReg = Reg(UInt(32 bits)) init 0
 
   shaFirstPrepare := False
@@ -2531,7 +2548,7 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
   val checkDigestMeetsTarget = BitcoinCandidateFilter.meets(options, checkCandidateModeReg, checkWorkLow32Reg)
 
   io.running := state =/= State.idle && state =/= State.report
-  io.found := state === State.report
+  io.found := (if (options.continuousResults) state === State.report || foundPulseReg else state === State.report)
   io.foundNonce := foundNonceReg
   io.currentNonce := currentNonceReg
 
@@ -2597,8 +2614,14 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
     checkNonceReg := 0
     checkCandidateModeReg := 3
     foundNonceReg := 0
+    if (options.continuousResults) {
+      foundPulseReg := False
+    }
     currentNonceReg := 0
   } otherwise {
+    if (options.continuousResults) {
+      foundPulseReg := False
+    }
     when(io.stop) {
       state := State.idle
       checkValidReg := False
@@ -2635,8 +2658,18 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
         is(State.run) {
           when(checkValidReg && checkDigestMeetsTarget) {
             foundNonceReg := checkNonceReg
-            state := State.report
-          } otherwise {
+            if (options.continuousResults) {
+              when(io.continuous) {
+                foundPulseReg := True
+              } otherwise {
+                state := State.report
+              }
+            } else {
+              state := State.report
+            }
+          }
+
+          when((if (options.continuousResults) io.continuous else False) || !(checkValidReg && checkDigestMeetsTarget)) {
             if (usesStartPipeline) {
               when(pipelineFirstCanStart) {
                 shaFirstStart := True
@@ -2681,6 +2714,91 @@ class BitcoinHashCore(options: TangMinerHardwareOptions = TangMinerHardwareOptio
       }
     }
   }
+}
+
+class CandidateResultQueue(laneCount: Int, fifoDepth: Int = 4) extends Component {
+  require(laneCount > 0, "laneCount must be positive")
+  require(fifoDepth > 0, "candidate FIFO depth must be positive")
+
+  val io = new Bundle {
+    val clear = in Bool()
+    val enable = in Bool()
+    val laneValid = in Bits(laneCount bits)
+    val laneNonce = in Vec(UInt(32 bits), laneCount)
+    val tag = in Bits(16 bits)
+    val popReady = in Bool()
+    val popValid = out Bool()
+    val popTag = out Bits(16 bits)
+    val popNonce = out UInt(32 bits)
+    val empty = out Bool()
+    val overflow = out Bool()
+  }
+
+  val pending = Reg(Bits(laneCount bits)) init 0
+  val pendingNonce = Vec(Reg(UInt(32 bits)) init 0, laneCount)
+  val pendingTag = Vec(Reg(Bits(16 bits)) init 0, laneCount)
+  val overflowReg = Reg(Bool()) init False
+  val selectWidth = log2Up(scala.math.max(2, laneCount))
+  val selectedValid = Bool()
+  val selectedLane = UInt(selectWidth bits)
+  val selectedTag = Bits(16 bits)
+  val selectedNonce = UInt(32 bits)
+
+  selectedValid := False
+  selectedLane := 0
+  selectedTag := 0
+  selectedNonce := 0
+  for (lane <- (0 until laneCount).reverse) {
+    when(pending(lane)) {
+      selectedValid := True
+      selectedLane := U(lane, selectWidth bits)
+      selectedTag := pendingTag(lane)
+      selectedNonce := pendingNonce(lane)
+    }
+  }
+
+  val fifo = StreamFifo(Bits(48 bits), fifoDepth)
+  fifo.io.flush := io.clear
+  fifo.io.push.valid := io.enable && selectedValid
+  fifo.io.push.payload := selectedTag ## selectedNonce.asBits
+  fifo.io.pop.ready := io.enable && io.popReady
+  val selectedAccepted = fifo.io.push.valid && fifo.io.push.ready
+
+  when(io.clear) {
+    pending := 0
+    overflowReg := False
+    for (lane <- 0 until laneCount) {
+      pendingTag(lane) := 0
+      pendingNonce(lane) := 0
+    }
+  } otherwise {
+    when(selectedAccepted) {
+      if (laneCount == 1) {
+        pending(0) := False
+      } else {
+        pending(selectedLane) := False
+      }
+    }
+
+    for (lane <- 0 until laneCount) {
+      val replacesAccepted = selectedAccepted && selectedLane === U(lane, selectWidth bits)
+      when(io.enable && io.laneValid(lane)) {
+        when(!pending(lane) || replacesAccepted) {
+          pending(lane) := True
+          pendingTag(lane) := io.tag
+          pendingNonce(lane) := io.laneNonce(lane)
+        } otherwise {
+          overflowReg := True
+        }
+      }
+    }
+  }
+
+  io.popValid := fifo.io.pop.valid
+  io.popTag := fifo.io.pop.payload(47 downto 32)
+  io.popNonce := fifo.io.pop.payload(31 downto 0).asUInt
+  io.empty := !pending.orR && !fifo.io.pop.valid
+  io.overflow := overflowReg
 }
 
 class BitcoinHashWideLaneBlock(
@@ -2749,8 +2867,7 @@ class BitcoinHashWideLaneBlock(
     prefix.io.midstate := io.midstate
     prefix.io.tail := io.tail
 
-    val prefixReadyLast = RegNext(prefix.io.ready) init False
-    startCores := prefix.io.ready && !prefixReadyLast
+    startCores := prefix.io.ready
     stopCores := io.stop || io.start
     roundSkipPrefixState := prefix.io.prefixState
     roundSkipTail2 := prefix.io.tail2
@@ -2788,6 +2905,7 @@ class BitcoinHashWideLaneBlock(
     core.io.reset := io.reset
     core.io.start := startCores
     core.io.stop := stopCores
+    core.io.continuous := False
     core.io.midstate := (if (options.hostRoundSkip) io.midstate else jobMidstateReg)
     core.io.tail := (if (options.hostRoundSkip) io.tail else jobTailReg)
     core.io.candidateMode := (if (options.hostRoundSkip) io.candidateMode else jobCandidateModeReg)
@@ -2839,6 +2957,9 @@ class MiningLanes(
     val reset = in Bool()
     val start = in Bool()
     val stop = in Bool()
+    val continuous = in Bool()
+    val resultTag = in Bits(16 bits)
+    val clearResults = in Bool()
     val midstate = in Bits(256 bits)
     val tail = in Bits(96 bits)
     val candidateMode = in UInt(3 bits)
@@ -2849,8 +2970,12 @@ class MiningLanes(
     val runningAny = out Bool()
     val foundAny = out Bool()
     val currentNonce = out UInt(32 bits)
+    val foundTag = out Bits(16 bits)
     val foundNonce = out UInt(32 bits)
     val nonceAttempts = out UInt(64 bits)
+    val foundReady = in Bool()
+    val resultsEmpty = out Bool()
+    val resultOverflow = out Bool()
   }
 
   if (options.fullyUnrolled) {
@@ -2875,6 +3000,9 @@ class MiningLanes(
     io.foundAny := pipelines.map(_.io.found).reduce(_ || _)
     io.currentNonce := pipelines(0).io.currentNonce
     io.nonceAttempts := NonceAttemptCounter(io.reset, io.start, pipelines.map(_.io.nonceAttempt))
+    io.foundTag := 0
+    io.resultsEmpty := !io.foundAny
+    io.resultOverflow := False
 
     io.foundNonce := pipelines(laneCount - 1).io.foundNonce
     for (lane <- (0 until laneCount - 1).reverse) {
@@ -2897,8 +3025,11 @@ class MiningLanes(
     io.runningAny := lanes.io.runningAny
     io.foundAny := lanes.io.foundAny
     io.currentNonce := lanes.io.currentNonce
+    io.foundTag := 0
     io.foundNonce := lanes.io.foundNonce
     io.nonceAttempts := lanes.io.nonceAttempts
+    io.resultsEmpty := !lanes.io.foundAny
+    io.resultOverflow := False
   } else {
     val coreOptions = options.copy(
       externalRoundConstants = options.sharedRoundConstant && options.roundSkip && laneStartStagger == 0 && !options.registerRoundConstant && !options.twoRoundsPerCycle && !options.twoRoundPipeline && !options.twoPhaseRoundPipeline
@@ -2951,8 +3082,7 @@ class MiningLanes(
         prefix.io.midstate := io.midstate
         prefix.io.tail := io.tail
 
-        val prefixReadyLast = RegNext(prefix.io.ready) init False
-        miningStart := prefix.io.ready && !prefixReadyLast
+        miningStart := prefix.io.ready
         coreStop := io.stop || io.start
         roundSkipPrefixState := prefix.io.prefixState
         roundSkipTail2 := prefix.io.tail2
@@ -3052,6 +3182,7 @@ class MiningLanes(
     for ((core, lane) <- cores.zipWithIndex) {
       core.io.start := coreStartByLane(lane)
       core.io.stop := coreStop
+      core.io.continuous := (if (options.continuousResults) io.continuous else False)
       core.io.midstate := coreMidstate
       core.io.tail := coreTail
       core.io.candidateMode := coreCandidateMode
@@ -3078,16 +3209,41 @@ class MiningLanes(
       }
     }
 
+    val legacyFoundAny = cores.map(_.io.found).reduce(_ || _)
+    val legacyFoundNonce = UInt(32 bits)
+    legacyFoundNonce := cores(laneCount - 1).io.foundNonce
+    for (lane <- (0 until laneCount - 1).reverse) {
+      when(cores(lane).io.found) {
+        legacyFoundNonce := cores(lane).io.foundNonce
+      }
+    }
+
     io.runningAny := cores.map(_.io.running).reduce(_ || _)
-    io.foundAny := cores.map(_.io.found).reduce(_ || _)
     io.currentNonce := cores(0).io.currentNonce
     io.nonceAttempts := NonceAttemptCounter(io.reset, io.start, cores.map(_.io.nonceAttempt))
 
-    io.foundNonce := cores(laneCount - 1).io.foundNonce
-    for (lane <- (0 until laneCount - 1).reverse) {
-      when(cores(lane).io.found) {
-        io.foundNonce := cores(lane).io.foundNonce
+    if (options.continuousResults) {
+      val resultQueue = new CandidateResultQueue(laneCount)
+      resultQueue.io.clear := io.reset || io.clearResults
+      resultQueue.io.enable := io.continuous
+      resultQueue.io.tag := io.resultTag
+      resultQueue.io.popReady := io.foundReady
+      for (lane <- 0 until laneCount) {
+        resultQueue.io.laneValid(lane) := cores(lane).io.found
+        resultQueue.io.laneNonce(lane) := cores(lane).io.foundNonce
       }
+
+      io.foundAny := Mux(io.continuous, resultQueue.io.popValid, legacyFoundAny)
+      io.foundTag := resultQueue.io.popTag
+      io.foundNonce := Mux(io.continuous, resultQueue.io.popNonce, legacyFoundNonce)
+      io.resultsEmpty := Mux(io.continuous, resultQueue.io.empty, !legacyFoundAny)
+      io.resultOverflow := resultQueue.io.overflow
+    } else {
+      io.foundAny := legacyFoundAny
+      io.foundTag := 0
+      io.foundNonce := legacyFoundNonce
+      io.resultsEmpty := !legacyFoundAny
+      io.resultOverflow := False
     }
   }
 }
@@ -3124,6 +3280,8 @@ class Top(
     "GW5 PLL profiles require a 50 MHz input clock")
   require(!splitShaClock || usePll, "splitShaClock requires a PLL-backed SHA clock")
   require(!hardwareOptions.hostRoundSkip || !splitShaClock, "hostRoundSkip does not support splitShaClock")
+  require(!hardwareOptions.continuousResults || !splitShaClock,
+    "continuousResults does not support splitShaClock")
 
   setDefinitionName("top")
   noIoPrefix()
@@ -3238,6 +3396,10 @@ class Top(
       lanes.io.reset := reset
       lanes.io.start := jobStart
       lanes.io.stop := stopPulse
+      lanes.io.continuous := False
+      lanes.io.resultTag := 0
+      lanes.io.clearResults := reset || stopPulse
+      lanes.io.foundReady := False
       lanes.io.midstate := jobPayload(SplitJobPayloadBits - 1 downto 99)
       lanes.io.tail := jobPayload(98 downto 3)
       lanes.io.candidateMode := jobPayload(2 downto 0).asUInt
@@ -3267,6 +3429,7 @@ class Top(
     val ClksPerBit = controlClksPerBit
     val JobBytes = 76
     val FoundRespBytes = 5
+    val TaggedRespBytes = 7
     val EchoRespBytes = 77
     val CounterRespBytes = 9
     val LaneCount = laneCount
@@ -3325,6 +3488,14 @@ class Top(
     val coreStart = Reg(Bool()) init False
     val coreStop = Reg(Bool()) init False
     val coreStartPending = Reg(Bool()) init False
+    val startContinuousPending = if (hardwareOptions.continuousResults) Reg(Bool()) init False else False
+    val startContinuous = if (hardwareOptions.continuousResults) Reg(Bool()) init False else False
+    val stagedJobTag = if (hardwareOptions.continuousResults) Reg(Bits(16 bits)) init 0 else B(0, 16 bits)
+    val startJobTag = if (hardwareOptions.continuousResults) Reg(Bits(16 bits)) init 0 else B(0, 16 bits)
+    val activeJobTag = if (hardwareOptions.continuousResults) Reg(Bits(16 bits)) init 0 else B(0, 16 bits)
+    val activeContinuous = if (hardwareOptions.continuousResults) Reg(Bool()) init False else False
+    val tagBytesRemaining = if (hardwareOptions.continuousResults) Reg(UInt(2 bits)) init 0 else U(0, 2 bits)
+    val capabilityPending = if (hardwareOptions.continuousResults) Reg(Bool()) init False else False
     val counterPending = Reg(Bool()) init False
     val counterSnapshot = Reg(UInt(64 bits)) init 0
     val echoToggle = if (hardwareOptions.enableEcho) Reg(Bool()) init False else False
@@ -3332,7 +3503,12 @@ class Top(
     val runningAny = Bool()
     val foundAny = Bool()
     val currentNonce = UInt(32 bits)
+    val selectedFoundTag = Bits(16 bits)
     val selectedFoundNonce = UInt(32 bits)
+    val taggedFoundReady = Bool()
+    val clearResults = Bool()
+    taggedFoundReady := False
+    clearResults := coreStop || (coreStart && (if (hardwareOptions.continuousResults) !startContinuous else False))
     val nonceAttempts = UInt(64 bits)
 
     val splitStopPending = if (splitShaClock) Reg(Bool()) init False else False
@@ -3347,6 +3523,7 @@ class Top(
       runningAny := BufferCC(splitShaRunningAny, 2)
       foundAny := splitFoundFifo.io.pop.valid
       currentNonce := U(0, 32 bits)
+      selectedFoundTag := 0
       selectedFoundNonce := splitFoundFifo.io.pop.payload.asUInt
       nonceAttempts := U(0, 64 bits)
     } else {
@@ -3354,6 +3531,10 @@ class Top(
       lanes.io.reset := reset
       lanes.io.start := coreStart
       lanes.io.stop := coreStop
+      lanes.io.continuous := (if (hardwareOptions.continuousResults) activeContinuous else False)
+      lanes.io.resultTag := activeJobTag
+      lanes.io.clearResults := clearResults
+      lanes.io.foundReady := taggedFoundReady
       lanes.io.midstate := midstate
       lanes.io.tail := tail
       lanes.io.candidateMode := candidateMode
@@ -3364,6 +3545,7 @@ class Top(
       runningAny := lanes.io.runningAny
       foundAny := lanes.io.foundAny
       currentNonce := lanes.io.currentNonce
+      selectedFoundTag := lanes.io.foundTag
       selectedFoundNonce := lanes.io.foundNonce
       nonceAttempts := lanes.io.nonceAttempts
     }
@@ -3375,6 +3557,16 @@ class Top(
       coreStart := False
       coreStop := False
       coreStartPending := False
+      if (hardwareOptions.continuousResults) {
+        startContinuousPending := False
+        startContinuous := False
+        stagedJobTag := 0
+        startJobTag := 0
+        activeJobTag := 0
+        activeContinuous := False
+        tagBytesRemaining := 0
+        capabilityPending := False
+      }
       counterPending := False
       counterSnapshot := 0
       if (splitShaClock) {
@@ -3397,6 +3589,13 @@ class Top(
       coreStart := False
       coreStop := False
 
+      if (hardwareOptions.continuousResults) {
+        when(coreStart) {
+          activeContinuous := startContinuous
+          activeJobTag := startJobTag
+        }
+      }
+
       if (splitShaClock) {
         when(coreStartPending && splitJobFifo.io.push.valid && splitJobFifo.io.push.ready) {
           coreStartPending := False
@@ -3407,6 +3606,10 @@ class Top(
       } else {
         when(coreStartPending) {
           coreStart := True
+          if (hardwareOptions.continuousResults) {
+            startContinuous := startContinuousPending
+            startJobTag := stagedJobTag
+          }
           coreStartPending := False
         }
       }
@@ -3422,7 +3625,12 @@ class Top(
           is(RxState.cmd) {
             command := rx.io.data
             payloadCount := 0
-            val acceptsJobPayload = rx.io.data === B"8'h4a" || (if (hardwareOptions.enableEcho) rx.io.data === B"8'h45" else False)
+            val acceptsJobPayload = rx.io.data === B"8'h4a" ||
+              (if (hardwareOptions.continuousResults) rx.io.data === B"8'h51" else False) ||
+              (if (hardwareOptions.enableEcho) rx.io.data === B"8'h45" else False)
+            if (hardwareOptions.continuousResults) {
+              tagBytesRemaining := 0
+            }
             when(rx.io.data === B"8'h53") {
               coreStop := True
               if (splitShaClock) {
@@ -3433,6 +3641,9 @@ class Top(
               counterSnapshot := nonceAttempts
               counterPending := True
               rxState := RxState.sync0
+            } elsewhen((if (hardwareOptions.continuousResults) rx.io.data === B"8'h47" else False)) {
+              capabilityPending := True
+              rxState := RxState.sync0
             } elsewhen((if (hardwareOptions.enableHardcodedJob && !hardwareOptions.hostRoundSkip) rx.io.data === B"8'h48" else False)) {
               midstate := B"256'hbc909a336358bff090ccac7d1e59caa8c3c8d8e94f0103c896b187364719f91b"
               tail := B"96'h4b1e5e4a29ab5f49ffff001d"
@@ -3440,9 +3651,18 @@ class Top(
                 target := B"256'hffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
               }
               candidateMode := CandidateAlways
+              if (hardwareOptions.continuousResults) {
+                startContinuousPending := False
+              }
               coreStartPending := True
               rxState := RxState.sync0
             } elsewhen(acceptsJobPayload) {
+              if (hardwareOptions.continuousResults) {
+                when(rx.io.data === B"8'h51") {
+                  stagedJobTag := 0
+                  tagBytesRemaining := 2
+                }
+              }
               if (hardwareOptions.hostRoundSkip) {
                 when(rx.io.data === B"8'h4a") {
                   coreStop := True
@@ -3462,7 +3682,15 @@ class Top(
             }
           }
           is(RxState.payload) {
-            if (hardwareOptions.hostRoundSkip) {
+            val payloadIsTag = (if (hardwareOptions.continuousResults)
+              command === B"8'h51" && tagBytesRemaining =/= 0 else False)
+            when(payloadIsTag) {
+              if (hardwareOptions.continuousResults) {
+                stagedJobTag := stagedJobTag(7 downto 0) ## rx.io.data
+                tagBytesRemaining := tagBytesRemaining - 1
+              }
+            } otherwise {
+              if (hardwareOptions.hostRoundSkip) {
               when(payloadCount < 32) {
                 midstate := midstate(247 downto 0) ## rx.io.data
               } elsewhen(payloadCount < 44) {
@@ -3472,8 +3700,12 @@ class Top(
               }
 
               when(payloadCount === JobBytes - 1) {
-                when(command === B"8'h4a") {
+                when(command === B"8'h4a" ||
+                  (if (hardwareOptions.continuousResults) command === B"8'h51" else False)) {
                   candidateMode := DefaultCandidate
+                  if (hardwareOptions.continuousResults) {
+                    startContinuousPending := command === B"8'h51"
+                  }
                   coreStartPending := True
                 }
                 if (hardwareOptions.enableEcho) {
@@ -3517,7 +3749,8 @@ class Top(
               }
 
               when(payloadCount === JobBytes - 1) {
-                when(command === B"8'h4a") {
+                when(command === B"8'h4a" ||
+                  (if (hardwareOptions.continuousResults) command === B"8'h51" else False)) {
                   candidateMode := CandidateQuick23
                   when(nextTargetIsAllOnes) {
                     candidateMode := CandidateAlways
@@ -3529,6 +3762,9 @@ class Top(
                     candidateMode := CandidateQuick21
                   } elsewhen(nextTargetIsQuick26) {
                     candidateMode := CandidateQuick26
+                  }
+                  if (hardwareOptions.continuousResults) {
+                    startContinuousPending := command === B"8'h51"
                   }
                   coreStartPending := True
                 }
@@ -3553,8 +3789,12 @@ class Top(
               }
 
               when(payloadCount === JobBytes - 1) {
-                when(command === B"8'h4a") {
+                when(command === B"8'h4a" ||
+                  (if (hardwareOptions.continuousResults) command === B"8'h51" else False)) {
                   candidateMode := DefaultCandidate
+                  if (hardwareOptions.continuousResults) {
+                    startContinuousPending := command === B"8'h51"
+                  }
                   coreStartPending := True
                 }
                 if (hardwareOptions.enableEcho) {
@@ -3567,6 +3807,7 @@ class Top(
                 payloadCount := payloadCount + 1
               }
             }
+            }
           }
         }
       }
@@ -3575,6 +3816,13 @@ class Top(
     def foundResponseByte(index: UInt, nonce: UInt): Bits = {
       val nonceBytes = (0 until 4).map(i => nonce.asBits(31 - i * 8 downto 24 - i * 8))
       val bytes = Vec(Seq(B"8'h46") ++ nonceBytes)
+      bytes(index.resized)
+    }
+
+    def taggedResponseByte(index: UInt, tag: Bits, nonce: UInt): Bits = {
+      val tagBytes = (0 until 2).map(i => tag(15 - i * 8 downto 8 - i * 8))
+      val nonceBytes = (0 until 4).map(i => nonce.asBits(31 - i * 8 downto 24 - i * 8))
+      val bytes = Vec(Seq(B"8'h52") ++ tagBytes ++ nonceBytes)
       bytes(index.resized)
     }
 
@@ -3592,8 +3840,12 @@ class Top(
     val echoSeenToggle = if (hardwareOptions.enableEcho) Reg(Bool()) init False else False
     val txEcho = if (hardwareOptions.enableEcho) Reg(Bool()) init False else False
     val txCounter = Reg(Bool()) init False
+    val txTagged = if (hardwareOptions.continuousResults) Reg(Bool()) init False else False
+    val txCapability = if (hardwareOptions.continuousResults) Reg(Bool()) init False else False
+    val txFoundTag = if (hardwareOptions.continuousResults) Reg(Bits(16 bits)) init 0 else B(0, 16 bits)
     val txFoundNonce = Reg(UInt(32 bits)) init 0
     val txCounterValue = Reg(UInt(64 bits)) init 0
+    val legacyFoundAny = (if (hardwareOptions.continuousResults) !activeContinuous && foundAny else foundAny)
 
     tx.io.start := txStart
     tx.io.data := txData
@@ -3606,6 +3858,11 @@ class Top(
       txData := B"8'hff"
       foundSeen := False
       txCounter := False
+      if (hardwareOptions.continuousResults) {
+        txTagged := False
+        txCapability := False
+        txFoundTag := 0
+      }
       if (hardwareOptions.enableEcho) {
         echoSeenToggle := False
         txEcho := False
@@ -3615,7 +3872,7 @@ class Top(
     } otherwise {
       txStart := False
 
-      when(!foundAny) {
+      when(!legacyFoundAny) {
         foundSeen := False
       }
 
@@ -3626,19 +3883,54 @@ class Top(
               txIndex := 0
               txEcho := True
               txCounter := False
+              if (hardwareOptions.continuousResults) {
+                txTagged := False
+                txCapability := False
+              }
               txState := TxState.send
               echoSeenToggle := echoToggle
+            } elsewhen((if (hardwareOptions.continuousResults) capabilityPending else False)) {
+              txIndex := 0
+              txEcho := False
+              txCounter := False
+              if (hardwareOptions.continuousResults) {
+                txTagged := False
+                txCapability := True
+                capabilityPending := False
+              }
+              txState := TxState.send
             } elsewhen(counterPending) {
               txIndex := 0
               txEcho := False
               txCounter := True
+              if (hardwareOptions.continuousResults) {
+                txTagged := False
+                txCapability := False
+              }
               txCounterValue := counterSnapshot
               counterPending := False
               txState := TxState.send
-            } elsewhen(foundAny && !foundSeen) {
+            } elsewhen((if (hardwareOptions.continuousResults)
+              activeContinuous && foundAny && !clearResults else False)) {
               txIndex := 0
               txEcho := False
               txCounter := False
+              if (hardwareOptions.continuousResults) {
+                txTagged := True
+                txCapability := False
+                txFoundTag := selectedFoundTag
+                taggedFoundReady := True
+              }
+              txFoundNonce := selectedFoundNonce
+              txState := TxState.send
+            } elsewhen(legacyFoundAny && !foundSeen) {
+              txIndex := 0
+              txEcho := False
+              txCounter := False
+              if (hardwareOptions.continuousResults) {
+                txTagged := False
+                txCapability := False
+              }
               txFoundNonce := selectedFoundNonce
               txState := TxState.send
               foundSeen := True
@@ -3647,15 +3939,44 @@ class Top(
               }
             }
           } else {
-            when(counterPending) {
+            when((if (hardwareOptions.continuousResults) capabilityPending else False)) {
+              txIndex := 0
+              txCounter := False
+              if (hardwareOptions.continuousResults) {
+                txTagged := False
+                txCapability := True
+                capabilityPending := False
+              }
+              txState := TxState.send
+            } elsewhen(counterPending) {
               txIndex := 0
               txCounter := True
+              if (hardwareOptions.continuousResults) {
+                txTagged := False
+                txCapability := False
+              }
               txCounterValue := counterSnapshot
               counterPending := False
               txState := TxState.send
-            } elsewhen(foundAny && !foundSeen) {
+            } elsewhen((if (hardwareOptions.continuousResults)
+              activeContinuous && foundAny && !clearResults else False)) {
               txIndex := 0
               txCounter := False
+              if (hardwareOptions.continuousResults) {
+                txTagged := True
+                txCapability := False
+                txFoundTag := selectedFoundTag
+                taggedFoundReady := True
+              }
+              txFoundNonce := selectedFoundNonce
+              txState := TxState.send
+            } elsewhen(legacyFoundAny && !foundSeen) {
+              txIndex := 0
+              txCounter := False
+              if (hardwareOptions.continuousResults) {
+                txTagged := False
+                txCapability := False
+              }
               txFoundNonce := selectedFoundNonce
               txState := TxState.send
               foundSeen := True
@@ -3667,33 +3988,41 @@ class Top(
         }
         is(TxState.send) {
           when(!tx.io.busy) {
-            if (hardwareOptions.enableEcho) {
+            val foundByte = if (hardwareOptions.continuousResults) {
+              Mux(txTagged, taggedResponseByte(txIndex, txFoundTag, txFoundNonce), foundResponseByte(txIndex, txFoundNonce))
+            } else {
+              foundResponseByte(txIndex, txFoundNonce)
+            }
+            val responseByte = if (hardwareOptions.enableEcho) {
               val midstateBytes = (0 until 32).map(i => midstate(255 - i * 8 downto 248 - i * 8))
               val tailBytes = (0 until 12).map(i => tail(95 - i * 8 downto 88 - i * 8))
               val echoPayloadTail = if (hardwareOptions.hostRoundSkip) hostRoundSkipPrefixState else target
               val targetBytes = (0 until 32).map(i => echoPayloadTail(255 - i * 8 downto 248 - i * 8))
               val echoBytes = Vec(Seq(B"8'h45") ++ midstateBytes ++ tailBytes ++ targetBytes)
-              txData := Mux(
-                txCounter,
-                counterResponseByte(txIndex, txCounterValue),
-                Mux(txEcho, echoBytes(txIndex.resized), foundResponseByte(txIndex, txFoundNonce))
-              )
+              Mux(txCounter, counterResponseByte(txIndex, txCounterValue), Mux(txEcho, echoBytes(txIndex.resized), foundByte))
             } else {
-              txData := Mux(txCounter, counterResponseByte(txIndex, txCounterValue), foundResponseByte(txIndex, txFoundNonce))
+              Mux(txCounter, counterResponseByte(txIndex, txCounterValue), foundByte)
             }
+            txData := (if (hardwareOptions.continuousResults)
+              Mux(txCapability, B"8'h47", responseByte) else responseByte)
             txStart := True
             txState := TxState.waitBusy
           }
         }
         is(TxState.waitBusy) {
           when(tx.io.busy) {
-            val responseDone = if (hardwareOptions.enableEcho) {
-              (txCounter && txIndex === CounterRespBytes - 1) ||
-                (!txCounter && ((!txEcho && txIndex === FoundRespBytes - 1) || (txEcho && txIndex === EchoRespBytes - 1)))
+            val foundDone = (if (hardwareOptions.continuousResults)
+              Mux(txTagged, txIndex === TaggedRespBytes - 1, txIndex === FoundRespBytes - 1)
+              else txIndex === FoundRespBytes - 1)
+            val payloadDone = if (hardwareOptions.enableEcho) {
+              Mux(txEcho, txIndex === EchoRespBytes - 1, foundDone)
             } else {
-              (txCounter && txIndex === CounterRespBytes - 1) ||
-                (!txCounter && txIndex === FoundRespBytes - 1)
+              foundDone
             }
+            val responseDone = (if (hardwareOptions.continuousResults)
+              (txCapability && txIndex === 0) ||
+                (!txCapability && ((txCounter && txIndex === CounterRespBytes - 1) || (!txCounter && payloadDone)))
+              else (txCounter && txIndex === CounterRespBytes - 1) || (!txCounter && payloadDone))
             when(responseDone) {
               txState := TxState.idle
             } otherwise {
@@ -3792,7 +4121,9 @@ object GenerateVerilog extends App {
     shareJobState = envBoolean("TANGMINER_SHARE_JOB_STATE", default = false) ||
       envBoolean("SPINAL_SHARE_JOB_STATE", default = false),
     hostRoundSkip = envBoolean("TANGMINER_HOST_ROUND_SKIP", default = false) ||
-      envBoolean("SPINAL_HOST_ROUND_SKIP", default = false)
+      envBoolean("SPINAL_HOST_ROUND_SKIP", default = false),
+    continuousResults = envBoolean("TANGMINER_CONTINUOUS_RESULTS", default = false) ||
+      envBoolean("SPINAL_CONTINUOUS_RESULTS", default = false)
   )
 
   SpinalConfig(
@@ -3878,7 +4209,9 @@ object GenerateSimVerilog extends App {
     shareJobState = envBoolean("TANGMINER_SHARE_JOB_STATE", default = false) ||
       envBoolean("SPINAL_SHARE_JOB_STATE", default = false),
     hostRoundSkip = envBoolean("TANGMINER_HOST_ROUND_SKIP", default = false) ||
-      envBoolean("SPINAL_HOST_ROUND_SKIP", default = false)
+      envBoolean("SPINAL_HOST_ROUND_SKIP", default = false),
+    continuousResults = envBoolean("TANGMINER_CONTINUOUS_RESULTS", default = false) ||
+      envBoolean("SPINAL_CONTINUOUS_RESULTS", default = false)
   )
 
   SpinalConfig(

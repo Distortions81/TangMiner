@@ -17,7 +17,9 @@ hardware_difficulty="${HARDWARE_SUGGEST_DIFFICULTY:-0.009539}"
 hardware_clock_mhz="${HARDWARE_CLOCK_MHZ:-${SPINAL_CLOCK_MHZ:-67.500}}"
 hardware_lanes="${HARDWARE_LANES:-${SPINAL_LANES:-6}}"
 hardware_lane_period_cycles="${HARDWARE_LANE_PERIOD_CYCLES:-${SPINAL_LANE_PERIOD_CYCLES:-65}}"
+hardware_serial_baud="${HARDWARE_SERIAL_BAUD:-115200}"
 hardware_host_round_skip="${HARDWARE_HOST_ROUND_SKIP:-0}"
+hardware_continuous_results="${HARDWARE_CONTINUOUS_RESULTS:-0}"
 hardware_baseline_mhs="${HARDWARE_BASELINE_MHS:-4.21875}"
 max_nonces="${SOFTWARE_MAX_NONCES:-100000}"
 
@@ -56,7 +58,8 @@ environment overrides:
   STRATUM_HOST, STRATUM_PORT, STRATUM_USER, STRATUM_PASS
   SOFTWARE_FPGA_TARGET, SOFTWARE_SUGGEST_DIFFICULTY, SOFTWARE_MAX_NONCES
   RTL_FPGA_TARGET, RTL_SUGGEST_DIFFICULTY, RTL_BENCHMARK_SECONDS, RTL_TARGET_SHARES_PER_MINUTE
-  HARDWARE_FPGA_TARGET, HARDWARE_SUGGEST_DIFFICULTY, HARDWARE_HOST_ROUND_SKIP, SERIAL_PORT
+  HARDWARE_FPGA_TARGET, HARDWARE_SUGGEST_DIFFICULTY, HARDWARE_SERIAL_BAUD
+  HARDWARE_HOST_ROUND_SKIP, HARDWARE_CONTINUOUS_RESULTS, SERIAL_PORT
   HARDWARE_CLOCK_MHZ, HARDWARE_LANES, HARDWARE_LANE_PERIOD_CYCLES
   NO_SUBMIT=1, VERBOSE=1
 EOF
@@ -101,6 +104,8 @@ run_client() {
   local difficulty="$2"
   local port_path="$3"
   local host_round_skip="${4:-0}"
+  local serial_baud="${5:-}"
+  local continuous_results="${6:-0}"
   local args=(
     "$client"
     --host "$host"
@@ -111,6 +116,9 @@ run_client() {
     --fpga-target "$target"
     --suggest-difficulty "$difficulty"
   )
+  if [ -n "$serial_baud" ]; then
+    args+=(--serial-baud "$serial_baud")
+  fi
   if [ "${VERBOSE:-0}" != "1" ]; then
     args+=(--quiet)
   fi
@@ -119,6 +127,9 @@ run_client() {
   fi
   if [ "$host_round_skip" = "1" ]; then
     args+=(--host-round-skip)
+  fi
+  if [ "$continuous_results" = "1" ]; then
+    args+=(--continuous-results)
   fi
   "${args[@]}"
 }
@@ -199,9 +210,11 @@ case "$mode" in
     fi
     echo "hardware_port=$serial_port"
     echo "hardware_target=$hardware_target suggested_difficulty=$hardware_difficulty"
+    echo "hardware_serial_baud=$hardware_serial_baud"
     echo "hardware_host_round_skip=$hardware_host_round_skip"
+    echo "hardware_continuous_results=$hardware_continuous_results"
     print_modeled_hashrate "$hardware_clock_mhz" "$hardware_lanes" "$hardware_lane_period_cycles" "$hardware_baseline_mhs"
-    run_client "$hardware_target" "$hardware_difficulty" "$serial_port" "$hardware_host_round_skip"
+    run_client "$hardware_target" "$hardware_difficulty" "$serial_port" "$hardware_host_round_skip" "$hardware_serial_baud" "$hardware_continuous_results"
     ;;
   *)
     usage >&2

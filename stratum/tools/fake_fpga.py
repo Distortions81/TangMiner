@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "tools"))
 
 from make_job import QUICK3_TARGET, QUICK14_TARGET, QUICK21_TARGET, QUICK23_TARGET, QUICK26_TARGET  # noqa: E402
-from tangminer_emulator import TangMinerEmulator  # noqa: E402
+from tangminer_emulator import TangMinerEmulator, decode_job_payload  # noqa: E402
 
 
 QUICK_TARGETS = {
@@ -39,11 +39,12 @@ def parse_quick_target(name: str):
 
 
 class FastFakeFpga:
-    def __init__(self, nonce: int, delay_ms: int, bad_every: int, drop_every: int):
+    def __init__(self, nonce: int, delay_ms: int, bad_every: int, drop_every: int, continuous: bool):
         self.nonce = nonce & 0xFFFFFFFF
         self.delay_ms = delay_ms
         self.bad_every = bad_every
         self.drop_every = drop_every
+        self.continuous = continuous
         self.state = "sync0"
         self.command = 0
         self.payload = bytearray()
@@ -71,19 +72,24 @@ class FastFakeFpga:
             if byte == ord("S"):
                 self.state = "sync0"
                 return b""
-            if byte in (ord("J"), ord("E")):
+            if byte == ord("G"):
+                self.state = "sync0"
+                return b"G" if self.continuous else b""
+            if byte in (ord("J"), ord("E")) or (byte == ord("Q") and self.continuous):
                 self.state = "payload"
                 return b""
             self.state = "sync0"
             return b""
         if self.state == "payload":
             self.payload.append(byte)
-            if len(self.payload) < 76:
+            payload_len = 78 if self.command == ord("Q") else 76
+            if len(self.payload) < payload_len:
                 return b""
             payload = bytes(self.payload)
             self.state = "sync0"
             if self.command == ord("E"):
                 return b"E" + payload
+            tag = payload[:2] if self.command == ord("Q") else b""
             self.jobs += 1
             if self.drop_every > 0 and self.jobs % self.drop_every == 0:
                 return b""
@@ -91,11 +97,49 @@ class FastFakeFpga:
                 time.sleep(self.delay_ms / 1000.0)
             if self.bad_every > 0 and self.jobs % self.bad_every == 0:
                 return b"X" + self.nonce.to_bytes(4, "big")
-            response = b"F" + self.nonce.to_bytes(4, "big")
+            prefix = b"R" + tag if self.command == ord("Q") else b"F"
+            response = prefix + self.nonce.to_bytes(4, "big")
             self.nonce = (self.nonce + 1) & 0xFFFFFFFF
             return response
         self.state = "sync0"
         return b""
+
+
+class ContinuousTangMinerEmulator(TangMinerEmulator):
+    def __init__(self, *, continuous: bool, **kwargs):
+        super().__init__(**kwargs)
+        self.continuous = continuous
+        self.jobs = 0
+
+    def _feed_byte(self, byte: int) -> bytes:
+        if self._rx_state == "cmd" and byte == ord("G"):
+            self._command = byte
+            self._payload.clear()
+            self._rx_state = "sync0"
+            return b"G" if self.continuous else b""
+
+        if self._rx_state == "cmd" and byte == ord("Q") and self.continuous:
+            self._command = byte
+            self._payload.clear()
+            self._rx_state = "tagged_payload"
+            return b""
+
+        if self._rx_state == "tagged_payload":
+            self._payload.append(byte)
+            if len(self._payload) < 78:
+                return b""
+            tag = bytes(self._payload[:2])
+            payload = bytes(self._payload[2:])
+            self._rx_state = "sync0"
+            self.jobs += 1
+            result = self._run_job(
+                self._candidate_job(decode_job_payload(payload))
+            )
+            if len(result) == 5 and result[0:1] == b"F":
+                return b"R" + tag + result[1:]
+            return result
+
+        return super()._feed_byte(byte)
 
 
 def serve_pty(fake, max_jobs: int) -> None:
@@ -133,8 +177,14 @@ def main() -> int:
     parser.add_argument("--delay-ms", type=int, default=0)
     parser.add_argument("--bad-every", type=int, default=0, help="return malformed X||nonce every N jobs")
     parser.add_argument("--drop-every", type=int, default=0, help="drop response every N jobs")
-    parser.add_argument("--max-jobs", type=int, default=0, help="exit after N TNJ jobs; 0 runs forever")
+    parser.add_argument("--max-jobs", type=int, default=0, help="exit after N jobs; 0 runs forever")
     parser.add_argument("--max-nonces", type=int, default=1_000_000, help="hash-mode scan limit")
+    parser.add_argument(
+        "--continuous",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="advertise and support TNG/TNQ tagged continuous results",
+    )
     parser.add_argument(
         "--target",
         type=parse_quick_target,
@@ -145,7 +195,8 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.mode == "hash":
-        fake = TangMinerEmulator(
+        fake = ContinuousTangMinerEmulator(
+            continuous=args.continuous,
             max_nonces=args.max_nonces,
             stats_interval=None,
             candidate_target_override=args.target,
@@ -156,6 +207,7 @@ def main() -> int:
             delay_ms=args.delay_ms,
             bad_every=args.bad_every,
             drop_every=args.drop_every,
+            continuous=args.continuous,
         )
     serve_pty(fake, args.max_jobs)
     return 0

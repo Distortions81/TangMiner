@@ -31,6 +31,7 @@ EXPECTED_LANE_PERIOD_CYCLES = int(os.environ.get("EXPECTED_LANE_PERIOD_CYCLES", 
 HOST_ROUND_SKIP_PAYLOAD = os.environ.get("HOST_ROUND_SKIP_PAYLOAD", "0").lower() in ("1", "true", "yes", "on")
 FIXED_CANDIDATE_MODE = os.environ.get("FIXED_CANDIDATE_MODE", "")
 STRICT_NONCE_CHECKS = os.environ.get("STRICT_NONCE_CHECKS", "0").lower() in ("1", "true", "yes", "on")
+CONTINUOUS_RESULTS = os.environ.get("CONTINUOUS_RESULTS", "0").lower() in ("1", "true", "yes", "on")
 
 
 def _encode_payload(job):
@@ -383,3 +384,110 @@ async def top_runs_hardcoded_job(dut):
     assert response[:1] == b"F"
     assert response[1:5] == b"\x00\x00\x00\x00"
     assert bitcoin_hash(build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET), 0) == GENESIS_EXPECTED_HASH_NONCE_ZERO
+
+
+async def _uart_read_tagged_response(dut, max_cycles=20_000):
+    response = await _uart_read(dut, 7, max_cycles=max_cycles)
+    assert response[:1] == b"R"
+    return response, int.from_bytes(response[1:3], "big"), int.from_bytes(response[3:7], "big")
+
+
+async def _uart_read_tagged_response_with_active_tag(dut, active_tag_signal, max_cycles=20_000):
+    await _wait_for_tx_start(dut, max_cycles=max_cycles)
+    active_tag_at_start = int(active_tag_signal.value)
+    await _ticks(dut, CLKS_PER_BIT + CLKS_PER_BIT // 2)
+
+    first = 0
+    for bit in range(8):
+        first |= int(dut.uart_tx_pin.value) << bit
+        await _ticks(dut, CLKS_PER_BIT)
+
+    assert int(dut.uart_tx_pin.value) == 1
+    await _ticks(dut, max(1, CLKS_PER_BIT // 2))
+    rest = [await _uart_read_byte(dut) for _ in range(6)]
+    response = bytes([first] + rest)
+    assert response[:1] == b"R"
+    return (
+        active_tag_at_start,
+        response,
+        int.from_bytes(response[1:3], "big"),
+        int.from_bytes(response[3:7], "big"),
+    )
+
+
+@cocotb.test(skip=not CONTINUOUS_RESULTS)
+async def top_negotiates_continuous_results(dut):
+    await _start_clock(dut)
+
+    await _uart_write(dut, b"TNG")
+
+    assert await _uart_read(dut, 1) == b"G"
+
+
+@cocotb.test(skip=not CONTINUOUS_RESULTS)
+async def top_continuous_job_reports_multiple_tagged_results(dut):
+    await _start_clock(dut)
+
+    tag = 0xA17C
+    job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
+    await _uart_write(dut, b"TNQ" + tag.to_bytes(2, "big") + encode_job_payload(job))
+
+    first_response, first_tag, first_nonce = await _uart_read_tagged_response(dut)
+    second_response, second_tag, second_nonce = await _uart_read_tagged_response(dut)
+
+    assert first_response[1:3] == b"\xa1\x7c"
+    assert second_response[1:3] == b"\xa1\x7c"
+    assert first_tag == tag
+    assert second_tag == tag
+    assert second_nonce > first_nonce
+    assert meets_target(bitcoin_hash(job, first_nonce), ALL_ONES_TARGET)
+    assert meets_target(bitcoin_hash(job, second_nonce), ALL_ONES_TARGET)
+
+    await _uart_write(dut, b"TNS")
+    await _ticks(dut, CLKS_PER_BIT * 160)
+    assert int(dut.uart_tx_pin.value) == 1
+
+
+@cocotb.test(skip=not CONTINUOUS_RESULTS)
+async def top_continuous_replacement_retains_old_tagged_results(dut):
+    await _start_clock(dut)
+
+    old_tag = 0x1357
+    new_tag = 0xBEE2
+    old_job = build_job_from_header(GENESIS_HEADER, ALL_ONES_TARGET)
+    replacement_header = bytes([GENESIS_HEADER[0] ^ 1]) + GENESIS_HEADER[1:]
+    new_job = build_job_from_header(replacement_header, ALL_ONES_TARGET)
+    active_tag_signal = _resolve_signal(dut, "coreArea_activeJobTag", "activeJobTag")
+
+    await _uart_write(dut, b"TNQ" + old_tag.to_bytes(2, "big") + encode_job_payload(old_job))
+
+    entries = []
+
+    async def collect_results():
+        for _ in range(24):
+            entries.append(
+                await _uart_read_tagged_response_with_active_tag(dut, active_tag_signal)
+            )
+
+    reader = cocotb.start_soon(collect_results())
+    await _uart_write(
+        dut,
+        b"TNQ" + new_tag.to_bytes(2, "big") + encode_job_payload(new_job),
+    )
+    await reader
+
+    tags = [entry[2] for entry in entries]
+    assert old_tag in tags
+    assert new_tag in tags
+    assert all(tag in (old_tag, new_tag) for tag in tags)
+    assert sum(
+        1
+        for active_tag_at_start, _, result_tag, _ in entries
+        if active_tag_at_start == new_tag and result_tag == old_tag
+    ) >= 2, "queued old-job results did not survive the Q replacement"
+
+    first_new = tags.index(new_tag)
+    assert old_tag not in tags[first_new + 1 :], "old tag reappeared after new-tag results began"
+
+    await _uart_write(dut, b"TNS")
+    await _ticks(dut, CLKS_PER_BIT * 100)

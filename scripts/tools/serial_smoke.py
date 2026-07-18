@@ -82,6 +82,16 @@ def main():
     )
     parser.add_argument("--echo", action="store_true", help="ask FPGA to echo the parsed job instead of hashing")
     parser.add_argument("--counter", action="store_true", help="query and print the FPGA nonce-attempt counter")
+    parser.add_argument(
+        "--no-job-counter",
+        action="store_true",
+        help="skip the nonce-attempt counter query after each hash result",
+    )
+    parser.add_argument(
+        "--resync",
+        action="store_true",
+        help="send enough stop frames to recover a partially received command before testing",
+    )
     parser.add_argument("--hardcoded", action="store_true", help="ask FPGA to run its built-in genesis nonce-zero job")
     parser.add_argument(
         "--host-round-skip",
@@ -110,6 +120,11 @@ def main():
                 time.sleep(0.1)
                 ser.reset_input_buffer()
                 ser.reset_output_buffer()
+                if args.resync:
+                    ser.write(b"TNS" * 27)
+                    ser.flush()
+                    time.sleep(0.01)
+                    ser.reset_input_buffer()
 
                 if args.counter:
                     count = read_counter(ser)
@@ -161,7 +176,7 @@ def main():
                             break
 
                         nonce = int.from_bytes(response[1:5], "big")
-                        attempts = read_counter(ser)
+                        attempts = None if args.no_job_counter else read_counter(ser)
                         digest = bitcoin_hash_for_nonce(header, nonce)
                         candidate_difficulty = share_difficulty(digest)
                         requested_difficulty = target_difficulty(validation_target)
@@ -180,11 +195,15 @@ def main():
                 except KeyboardInterrupt:
                     print(f"{port}: stopped")
                     return
+                if args.require_target and target_failures:
+                    raise SystemExit(
+                        f"{port}: {target_failures}/{job_index} returned nonce(s) failed host target verification"
+                    )
+                if total_jobs is not None and job_index != total_jobs:
+                    raise SystemExit(
+                        f"{port}: completed {job_index}/{total_jobs} jobs before an invalid or incomplete response"
+                    )
                 if job_index:
-                    if args.require_target and target_failures:
-                        raise SystemExit(
-                            f"{port}: {target_failures}/{job_index} returned nonce(s) failed host target verification"
-                        )
                     return
         except Exception as exc:
             print(f"{port}: ERROR {exc}")

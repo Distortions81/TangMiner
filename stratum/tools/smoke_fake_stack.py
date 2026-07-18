@@ -43,6 +43,13 @@ def main() -> int:
     parser.add_argument("--backend", choices=("fake", "rtl"), default="fake")
     parser.add_argument("--fpga-mode", choices=("fast", "hash"), default="fast")
     parser.add_argument("--pool-difficulty", type=float, default=0.00000001)
+    parser.add_argument("--continuous-results", action="store_true")
+    parser.add_argument(
+        "--fake-continuous",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="make the fake FPGA advertise tagged continuous-result support",
+    )
     args = parser.parse_args()
 
     pool = subprocess.Popen(
@@ -74,6 +81,8 @@ def main() -> int:
             "--mode",
             args.fpga_mode,
         ]
+        if not args.fake_continuous:
+            fpga_cmd.append("--no-continuous")
         fpga_pattern = r"fake_fpga_pty=(/dev/pts/\d+)"
         fpga_label = "fake_fpga"
 
@@ -88,23 +97,26 @@ def main() -> int:
     try:
         pool_match = read_until(r"fake_pool_addr=([^:]+):(\d+)", pool, "fake_pool")
         fpga_match = read_until(fpga_pattern, fpga, fpga_label)
+        client_cmd = [
+            args.client,
+            "--host",
+            pool_match.group(1),
+            "--port",
+            pool_match.group(2),
+            "--user",
+            "tester.worker",
+            "--pass",
+            "x",
+            "--serial-port",
+            fpga_match.group(1),
+            "--fpga-target",
+            "quick3",
+            "--quiet",
+        ]
+        if args.continuous_results:
+            client_cmd.append("--continuous-results")
         client = subprocess.run(
-            [
-                args.client,
-                "--host",
-                pool_match.group(1),
-                "--port",
-                pool_match.group(2),
-                "--user",
-                "tester.worker",
-                "--pass",
-                "x",
-                "--serial-port",
-                fpga_match.group(1),
-                "--fpga-target",
-                "quick3",
-                "--quiet",
-            ],
+            client_cmd,
             cwd=REPO_ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -112,9 +124,16 @@ def main() -> int:
             timeout=args.timeout,
         )
         submitted = "submitted job=" in client.stdout
+        mode_ok = True
+        if args.backend == "fake" and args.continuous_results:
+            if args.fake_continuous:
+                mode_ok = "continuous_results=enabled" in client.stdout
+            else:
+                mode_ok = "using legacy mode" in client.stderr
         print(f"client_return={client.returncode}")
         print(f"submitted_seen={str(submitted).lower()}")
-        if not submitted:
+        print(f"requested_mode_ok={str(mode_ok).lower()}")
+        if not submitted or not mode_ok:
             print(client.stdout)
             print(client.stderr, file=sys.stderr)
             return 1
