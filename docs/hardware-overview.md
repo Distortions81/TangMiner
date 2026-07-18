@@ -16,8 +16,8 @@ At a high level:
   nonce space by residue: lane starts `0..5`, and each lane increments by `6`.
 - Each Nano lane has two iterative 64-round `Sha256Compress` engines: one for
   the header final-block pass and one for the second SHA-256 pass.
-- Tang Mega fully unrolled pipelines instead dedicate a registered hardware
-  stage to each retained round and accept a new nonce on every clock.
+- Tang Mega supports both the selected iterative multi-lane architecture and
+  experimental fully unrolled pipelines.
 - Experimental round-skip mode precomputes first-pass rounds 0..2 once per job
   and starts nonce-dependent work at round 3.
 - Each lane adds the SHA-256 feed-forward state outside the compressors: job
@@ -29,12 +29,16 @@ At a high level:
   full share target comparison.
 
 For `TARGET=tangmega138k`, the onboard 50 MHz clock feeds a native GW5 `PLL`.
-Each fully unrolled pipeline skips host-precomputed first-pass rounds 0..2,
-registers rounds 3..63, registers the first-pass feed-forward, registers
-second-pass rounds 0..60, and then registers the low-word candidate. This is a
-124-clock start-to-result latency with an initiation interval of one clock.
-Multiple pipelines stripe the nonce space exactly like the iterative lanes, so
-aggregate modeled throughput is `pipeline_count * fabric_clock_hz`.
+A 16-lane iterative experiment uses host-precomputed first-pass rounds 0..2.
+Each lane launches a nonce every 61 clocks, for a modeled aggregate throughput
+of `50 MHz * 16 / 61 = 13.115 MH/s`. A retained pre-commit artifact passed
+100/100 strict `quick21` hardware jobs, but the current-RTL rebuild returned
+88/88 false positives despite closing timing. It is not a selected image.
+
+The experimental fully unrolled architecture registers first-pass rounds
+3..63, the first-pass feed-forward, second-pass rounds 0..60, and the low-word
+candidate. It has a 124-clock start-to-result latency and accepts one nonce per
+clock per pipeline, but the one-pipeline experiments have not routed cleanly.
 
 A reusable half-length pipeline must process every nonce twice. Three halves can
 only average 1.5 completed nonces per clock and require pass tagging, queues,
@@ -53,8 +57,9 @@ real hardware.
 
 With `SPINAL_ROUND_SKIP=1`, each lane launches a nonce every `61` clocks by
 skipping the nonce-independent first-pass rounds and deriving the low candidate
-word after second-pass round 60. That mode is experimental until strict host
-nonce validation passes on real hardware.
+word after second-pass round 60. A retained Tang Mega 138K artifact has validated this mode, but the
+current-RTL rebuild failed strict hardware checks. Treat every new mapping as
+experimental until it passes the same checks.
 
 With `SPINAL_REGISTER_PASS_OUTPUTS=1`, each lane adds one cycle between
 first-pass completion and the next first/second pass launch. That fence cuts the

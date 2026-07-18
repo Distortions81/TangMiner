@@ -23,6 +23,14 @@ Default target:
   checks, with the hardware nonce-attempt counter queried over UART through
   `TNC`.
 
+Tang Mega 138K diagnostic:
+
+- A pre-commit 16-lane iterative artifact at 50 MHz passed 100/100 strict
+  `quick21` jobs on 2026-07-18 and models at `13.115 MH/s`.
+- Rebuilding the same nominal settings from current RTL closes at 57.601 MHz
+  but returned 88/88 false-positive candidates. It is hardware-rejected and is
+  not the default.
+
 The selected 20K default is:
 
 ```text
@@ -166,6 +174,8 @@ TARGET=tangmega138k scripts/flash-and-mine.sh --load /dev/ttyUSB1
 
 This target uses the `GW5AST-LV138PG484AC1/I0`, its 50 MHz board clock, the
 Dock USB-UART pins, and the `tangmega138k` openFPGALoader board definition.
+The 16-lane iterative configuration is still diagnostic: the retained older
+artifact validates on hardware, but a rebuild from current RTL does not.
 The constraint file selects the current Dock RX pin (`V14`); older Dock boards
 that route RX to `Y14` need that one pin changed in `constr/tangmega138k.cst`.
 
