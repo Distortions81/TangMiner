@@ -269,6 +269,13 @@ pipeline contains 61 registered first-pass rounds, a registered feed-forward,
 candidate appears 124 clocks after injection and subsequent candidates appear
 every clock, so its modeled rate is simply `clock_hz * SPINAL_LANES`. It
 requires both `SPINAL_HOST_ROUND_SKIP=1` and `SPINAL_ROUND_SKIP=1`.
+`SPINAL_HALF_UNROLLED=1` selects a two-cycle folded version of that pipeline.
+Each SHA pass uses 31 physical round stages: an advance cycle processes the
+even member of each round pair and the feedback cycle processes the odd member.
+The first candidate appears 123 clocks after start and subsequent candidates
+appear every two clocks, for a modeled rate of
+`clock_hz * SPINAL_LANES / 2`. It also requires host round skip and round skip.
+Use `scripts/test-half-unrolled-pipeline.sh` for direct bit-exact RTL coverage.
 `SPINAL_REGISTER_FIRST_PASS_FEEDFORWARD=1` adds a targeted first-pass
 feed-forward fence in the full path and host-round-skip experiments.
 `SPINAL_TWO_ROUNDS_PER_CYCLE=1` is an experimental, local-K-only partially

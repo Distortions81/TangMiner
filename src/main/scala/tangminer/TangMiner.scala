@@ -27,6 +27,7 @@ case class TangMinerHardwareOptions(
   enableHardcodedJob: Boolean = true,
   fixedCandidateMode: Option[Int] = None,
   fullyUnrolled: Boolean = false,
+  halfUnrolled: Boolean = false,
   unrolledDelayStyle: String = "auto",
   wideLaneBlock: Boolean = false,
   registerPassOutputs: Boolean = false,
@@ -81,12 +82,19 @@ case class TangMinerHardwareOptions(
   require(!hostRoundSkip || roundSkip, "hostRoundSkip requires roundSkip")
   require(!(hostRoundSkip && fixedCandidateMode.isEmpty), "hostRoundSkip requires fixedCandidateMode")
   require(!fullyUnrolled || hostRoundSkip, "fullyUnrolled requires hostRoundSkip")
+  require(!halfUnrolled || hostRoundSkip, "halfUnrolled requires hostRoundSkip")
+  require(!(fullyUnrolled && halfUnrolled), "fullyUnrolled and halfUnrolled are alternative mining topologies")
   require(!(fullyUnrolled && wideLaneBlock), "fullyUnrolled and wideLaneBlock are alternative mining topologies")
+  require(!(halfUnrolled && wideLaneBlock), "halfUnrolled and wideLaneBlock are alternative mining topologies")
   require(!(fullyUnrolled && (twoCycleRound || threeCycleRound || twoRoundsPerCycle || twoRoundPipeline || twoPhaseRoundPipeline)),
     "fullyUnrolled cannot be combined with iterative round-cycle modes")
   require(!(fullyUnrolled && (csaRound || csaSchedule || balancedRoundAdder)),
     "fullyUnrolled uses its dedicated fixed-index round datapath")
-  require(!continuousResults || !fullyUnrolled,
+  require(!(halfUnrolled && (twoCycleRound || threeCycleRound || twoRoundsPerCycle || twoRoundPipeline || twoPhaseRoundPipeline)),
+    "halfUnrolled cannot be combined with iterative round-cycle modes")
+  require(!(halfUnrolled && (csaRound || csaSchedule || balancedRoundAdder)),
+    "halfUnrolled uses its dedicated fixed-index round datapath")
+  require(!continuousResults || !(fullyUnrolled || halfUnrolled),
     "continuousResults supports iterative cores only")
   require(!continuousResults || !wideLaneBlock,
     "continuousResults does not support wideLaneBlock")
@@ -3010,6 +3018,38 @@ class MiningLanes(
         io.foundNonce := pipelines(lane).io.foundNonce
       }
     }
+  } else if (options.halfUnrolled) {
+    require(laneStartStagger == 0, "halfUnrolled pipelines start together and do not support laneStartStagger")
+    val pipelines = (0 until laneCount).map(_ => new BitcoinHashHalfUnrolledPipeline(options))
+
+    for ((pipeline, lane) <- pipelines.zipWithIndex) {
+      pipeline.io.reset := io.reset
+      pipeline.io.start := io.start
+      pipeline.io.stop := io.stop
+      pipeline.io.midstate := io.midstate
+      pipeline.io.candidateMode := io.candidateMode
+      pipeline.io.roundSkipPrefixState := io.hostRoundSkipPrefixState
+      pipeline.io.roundSkipTail2 := io.hostRoundSkipTail2
+      pipeline.io.roundSkipW16 := io.hostRoundSkipW16
+      pipeline.io.roundSkipW17 := io.hostRoundSkipW17
+      pipeline.io.startNonce := U(lane, 32 bits)
+      pipeline.io.nonceStride := U(laneCount, 32 bits)
+    }
+
+    io.runningAny := pipelines.map(_.io.running).reduce(_ || _)
+    io.foundAny := pipelines.map(_.io.found).reduce(_ || _)
+    io.currentNonce := pipelines(0).io.currentNonce
+    io.nonceAttempts := NonceAttemptCounter(io.reset, io.start, pipelines.map(_.io.nonceAttempt))
+    io.foundTag := 0
+    io.resultsEmpty := !io.foundAny
+    io.resultOverflow := False
+
+    io.foundNonce := pipelines(laneCount - 1).io.foundNonce
+    for (lane <- (0 until laneCount - 1).reverse) {
+      when(pipelines(lane).io.found) {
+        io.foundNonce := pipelines(lane).io.foundNonce
+      }
+    }
   } else if (options.wideLaneBlock) {
     val lanes = new BitcoinHashWideLaneBlock(laneCount, options)
     lanes.io.reset := io.reset
@@ -4083,6 +4123,8 @@ object GenerateVerilog extends App {
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE"), Some(2)),
     fullyUnrolled = envBoolean("TANGMINER_FULLY_UNROLLED", default = false) ||
       envBoolean("SPINAL_FULLY_UNROLLED", default = false),
+    halfUnrolled = envBoolean("TANGMINER_HALF_UNROLLED", default = false) ||
+      envBoolean("SPINAL_HALF_UNROLLED", default = false),
     unrolledDelayStyle = envString(
       Seq("TANGMINER_UNROLLED_DELAY_STYLE", "SPINAL_UNROLLED_DELAY_STYLE"),
       "auto"
@@ -4171,6 +4213,8 @@ object GenerateSimVerilog extends App {
     fixedCandidateMode = envOptionalInt(Seq("TANGMINER_FIXED_CANDIDATE", "SPINAL_FIXED_CANDIDATE")),
     fullyUnrolled = envBoolean("TANGMINER_FULLY_UNROLLED", default = false) ||
       envBoolean("SPINAL_FULLY_UNROLLED", default = false),
+    halfUnrolled = envBoolean("TANGMINER_HALF_UNROLLED", default = false) ||
+      envBoolean("SPINAL_HALF_UNROLLED", default = false),
     unrolledDelayStyle = envString(
       Seq("TANGMINER_UNROLLED_DELAY_STYLE", "SPINAL_UNROLLED_DELAY_STYLE"),
       "auto"

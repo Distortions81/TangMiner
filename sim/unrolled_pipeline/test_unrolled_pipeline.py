@@ -1,4 +1,5 @@
 import hashlib
+import os
 import random
 
 import cocotb
@@ -18,12 +19,13 @@ SHA256_IV7 = 0x5BE0CD19
 CANDIDATE_ALWAYS = 0
 CANDIDATE_QUICK26 = 4
 
-# The engine registers 61 first-pass rounds, one feed-forward boundary, 61
-# second-pass rounds, and the externally visible candidate. A start pulse
-# flushes the old valids; the first round register accepts on the following
-# edge, yielding this exact start-edge-to-candidate-edge latency.
-PIPELINE_REGISTER_STAGES = 61 + 1 + 61 + 1
-EXPECTED_START_TO_FIRST_CANDIDATE = PIPELINE_REGISTER_STAGES
+UNROLLED_VARIANT = os.environ.get("UNROLLED_VARIANT", "full")
+CANDIDATE_PERIOD = 2 if UNROLLED_VARIANT == "half" else 1
+# Full mode has 124 registered boundaries. Folded mode performs alternating
+# advance and feedback rounds, with a one-cycle pass handoff, so its first
+# result is visible 123 cycles after start.
+EXPECTED_START_TO_FIRST_CANDIDATE = 123 if UNROLLED_VARIANT == "half" else 124
+ATTEMPTS_AT_FIRST_CANDIDATE = 62 if UNROLLED_VARIANT == "half" else 124
 
 
 def _clock(signal, period, unit):
@@ -138,9 +140,14 @@ async def _collect_contiguous(
     nonce = first_nonce & MASK32
     for index in range(count):
         if index != 0 or not first_already_sampled:
-            await _sample_edge(dut)
+            for gap_cycle in range(CANDIDATE_PERIOD):
+                await _sample_edge(dut)
+                if gap_cycle < CANDIDATE_PERIOD - 1:
+                    assert int(dut.candidateValid.value) == 0, (
+                        f"candidateValid asserted inside cadence gap at stream index {index}"
+                    )
         assert int(dut.candidateValid.value) == 1, (
-            f"candidateValid gap at stream index {index}"
+            f"candidateValid missing at stream index {index}"
         )
         _check_candidate(dut, header_prefix, nonce)
         assert not _quick26_matches(header_prefix, nonce), (
@@ -278,7 +285,7 @@ async def unrolled_pipeline_is_bit_exact_and_flushes_control_events(dut):
     assert int(dut.nonceAttempt.value) == 0, "match did not stop new nonce attempts"
 
     stopped_current_nonce = (
-        found_start + PIPELINE_REGISTER_STAGES * found_stride
+        found_start + ATTEMPTS_AT_FIRST_CANDIDATE * found_stride
     ) & MASK32
     assert int(dut.currentNonce.value) == stopped_current_nonce, (
         "currentNonce is not the next unattempted nonce at the match"
